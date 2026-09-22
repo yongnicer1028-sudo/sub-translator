@@ -35,34 +35,11 @@
             android:textStyle="bold"
             android:layout_marginTop="8dp" />
 
-        <RadioGroup
-            android:id="@+id/radioLanguage"
-            android:layout_width="wrap_content"
+        <Spinner
+            android:id="@+id/spinnerLanguage"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="6dp">
-
-            <RadioButton
-                android:id="@+id/radioChinese"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="중국어"
-                android:checked="true" />
-
-            <RadioButton
-                android:id="@+id/radioJapanese"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="일본어" />
-
-            <RadioButton
-                android:id="@+id/radioEnglish"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="영어" />
-        </RadioGroup>
+            android:layout_marginTop="6dp" />
 
         <Button
             android:id="@+id/btnSaveSettings"
