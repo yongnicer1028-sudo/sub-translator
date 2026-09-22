@@ -32,18 +32,25 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-import kotlin.math.abs
 
 /**
  * 이 서비스 하나가 전부 다 해요:
  * 1. 영상 앱이 재생 중인 소리를 내부적으로 가져오고 (마이크 아님, 이어폰 껴도 됨)
- * 2. 몇 초 단위로 잘라서 Vosk(완전 무료, 오프라인 음성인식)로 글자를 만들고
+ * 2. Vosk(완전 무료, 오프라인 음성인식)에 소리를 끊김없이 계속 흘려보내면서, Vosk가
+ *    "말이 한 번 끝났다"고 스스로 판단하는 순간마다 문장을 만들고
  * 3. ML Kit(완전 무료, 오프라인)으로 한국어로 번역하고
  * 4. 화면 위에 떠 있는 작은 자막창에 표시해요.
+ *
+ * ⚠ v2 변경점: 예전에는 소리를 3.5초 단위로 뚝뚝 잘라서 인식했더니 문장이 중간에
+ * 잘리고(그래서 번역도 단어 몇 개 수준으로만 나왔어요), 게다가 번역하는 동안 새로
+ * 들어온 소리는 통째로 버려지고 있었어요(그래서 계속 말을 해도 자막은 거의 안 뜸).
+ * 지금은 (1) 소리를 끊지 않고 계속 흘려보내면서 Vosk가 스스로 "문장이 끝났다"를
+ * 판단하게 하고, (2) 인식된 문장은 버리지 않고 순서대로 번역 대기열에 쌓아서
+ * 하나도 놓치지 않게 바꿨어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -53,7 +60,12 @@ class TranslateOverlayService : Service() {
         private const val NOTIF_CHANNEL_ID = "sub_translator_channel"
         private const val NOTIF_ID = 1001
         private const val SAMPLE_RATE = 16000
-        private const val CHUNK_SECONDS = 3.5
+
+        /** 이만큼 말이 안 끊기고 계속되면, 기다리지 않고 지금까지 들은 걸 강제로 한 문장으로 끊어요. */
+        private const val MAX_UTTERANCE_MS = 8000L
+
+        /** 아직 말하는 중일 때, 화면의 "듣는 중…" 표시를 얼마 간격으로 갱신할지 */
+        private const val PARTIAL_UPDATE_INTERVAL_MS = 400L
 
         /** MainActivity가 화면에 "실행 중" 표시를 하기 위해 확인하는 값 */
         @Volatile
@@ -63,10 +75,12 @@ class TranslateOverlayService : Service() {
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
 
+    /** Vosk가 문장을 완성해줄 때마다 여기 순서대로 쌓아두고, 따로 하나씩 번역해요. */
+    private val translationQueue = Channel<String>(Channel.UNLIMITED)
+
     private var mediaProjection: MediaProjection? = null
     private var audioRecord: AudioRecord? = null
     private var capturing = false
-    private var busy = false
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
@@ -78,6 +92,14 @@ class TranslateOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        // 번역 대기열을 계속 지켜보면서, 문장이 들어오는 대로 순서대로 번역해요.
+        // (오디오를 듣는 작업과 완전히 따로 돌아가서, 번역하는 동안에도 다음 소리를 놓치지 않아요)
+        serviceScope.launch {
+            for (text in translationQueue) {
+                translateAndShow(text)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -293,58 +315,49 @@ class TranslateOverlayService : Service() {
         record.startRecording()
         capturing = true
 
-        val bytesPerChunk = (SAMPLE_RATE * CHUNK_SECONDS * 2).toInt() // 16bit = 2byte
         val readBuf = ByteArray(4096)
-        val outStream = ByteArrayOutputStream()
 
         serviceScope.launch {
+            var lastFinalAt = System.currentTimeMillis()
+            var lastPartialUpdateAt = 0L
+
             while (capturing) {
                 val read = try {
                     record.read(readBuf, 0, readBuf.size)
                 } catch (e: Exception) {
                     break
                 }
-                if (read > 0) {
-                    outStream.write(readBuf, 0, read)
+                if (read <= 0) continue
+
+                val client = speechClient ?: continue // 음성인식 모델이 아직 준비 안 됐으면 건너뜀
+                val now = System.currentTimeMillis()
+
+                val finalText = client.feed(readBuf, read)
+                if (finalText != null) {
+                    // 문장 하나가 완성됐어요! 번역 대기열에 넣어두면, 따로 순서대로 번역돼요.
+                    lastFinalAt = now
+                    translationQueue.trySend(finalText)
+                    continue
                 }
-                if (outStream.size() >= bytesPerChunk) {
-                    val chunk = outStream.toByteArray()
-                    outStream.reset()
-                    processChunk(chunk)
+
+                if (now - lastFinalAt >= MAX_UTTERANCE_MS) {
+                    // 말이 너무 오래 안 끊겨요 → 기다리지 않고 지금까지 들은 걸로 문장을 완성해요.
+                    lastFinalAt = now
+                    val forced = client.flush()
+                    if (forced != null) {
+                        translationQueue.trySend(forced)
+                    }
+                } else if (now - lastPartialUpdateAt >= PARTIAL_UPDATE_INTERVAL_MS) {
+                    // 아직 말하는 중이에요 → 지금까지 들린 내용을 화면에 살짝 보여줘서
+                    // "멈춘 게 아니라 듣고 있다"는 걸 알 수 있게 해요.
+                    lastPartialUpdateAt = now
+                    val partial = client.partialText()
+                    if (partial.isNotBlank()) {
+                        updateCaptionSync("듣는 중… $partial")
+                    }
                 }
             }
         }
-    }
-
-    private fun processChunk(pcm: ByteArray) {
-        val client = speechClient ?: return // 음성인식 모델이 아직 준비 안 됐으면 건너뜀
-        if (busy) return // 이전 조각을 아직 처리 중이면 이번 조각은 건너뜀 (중복/역전 방지)
-        if (isSilent(pcm)) return
-        busy = true
-        serviceScope.launch {
-            try {
-                val transcript = client.recognize(pcm)
-                if (transcript.isNotBlank()) {
-                    translateAndShow(transcript)
-                }
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    private fun isSilent(pcm: ByteArray): Boolean {
-        var sum = 0L
-        var i = 0
-        while (i + 1 < pcm.size) {
-            val sample = (pcm[i].toInt() and 0xFF) or (pcm[i + 1].toInt() shl 8)
-            sum += abs(sample.toShort().toInt())
-            i += 2
-        }
-        val sampleCount = pcm.size / 2
-        if (sampleCount == 0) return true
-        val avg = sum / sampleCount
-        return avg < 150 // 이 값보다 작으면 사실상 무음으로 간주하고 건너뜀
     }
 
     private suspend fun translateAndShow(text: String) {
@@ -388,6 +401,8 @@ class TranslateOverlayService : Service() {
 
         speechClient?.close()
         speechClient = null
+
+        translationQueue.close()
 
         overlayView?.let {
             try {
