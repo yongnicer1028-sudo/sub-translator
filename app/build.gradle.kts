@@ -15,12 +15,26 @@ android {
         versionName = "0.1"
     }
 
+    // ⚠ 이 서명 설정이 없으면, 깃허브에서 새로 빌드할 때마다 매번 다른 임시 서명이 생겨서
+    // "패키지가 기존 앱과 충돌합니다"라며 설치가 안 돼요(지우고 새로 깔아야 함 → 음성인식
+    // 모델도 다시 받아야 해서 불편함). app/debug.keystore를 저장소에 같이 올려두고 항상
+    // 똑같은 서명을 쓰게 하면, 새 버전을 그냥 위에 덮어 설치할 수 있고 받아둔 모델도 안 지워져요.
+    signingConfigs {
+        create("stableDebug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("stableDebug")
         }
     }
 
