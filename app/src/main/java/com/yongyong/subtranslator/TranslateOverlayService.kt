@@ -17,6 +17,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -51,6 +52,10 @@ import kotlinx.coroutines.withContext
  * 지금은 (1) 소리를 끊지 않고 계속 흘려보내면서 Vosk가 스스로 "문장이 끝났다"를
  * 판단하게 하고, (2) 인식된 문장은 버리지 않고 순서대로 번역 대기열에 쌓아서
  * 하나도 놓치지 않게 바꿨어요.
+ *
+ * ⚠ v3 변경점: 자막창엔 번역된 한국어만 보여줘요(중간 인식 결과는 안 보여줘요), 최근
+ * 5줄까지는 화면에 남아있게 했어요. 자막창 가장자리를 끌면 너비를 조절할 수 있고,
+ * 더블탭하면 일시정지/재생, 길게 누르면 꺼져요(창이 사라져요).
  */
 class TranslateOverlayService : Service() {
 
@@ -64,8 +69,8 @@ class TranslateOverlayService : Service() {
         /** 이만큼 말이 안 끊기고 계속되면, 기다리지 않고 지금까지 들은 걸 강제로 한 문장으로 끊어요. */
         private const val MAX_UTTERANCE_MS = 8000L
 
-        /** 아직 말하는 중일 때, 화면의 "듣는 중…" 표시를 얼마 간격으로 갱신할지 */
-        private const val PARTIAL_UPDATE_INTERVAL_MS = 400L
+        /** 자막창에 최근 번역을 몇 줄까지 남겨둘지 */
+        private const val MAX_CAPTION_LINES = 5
 
         /** MainActivity가 화면에 "실행 중" 표시를 하기 위해 확인하는 값 */
         @Volatile
@@ -77,6 +82,13 @@ class TranslateOverlayService : Service() {
 
     /** Vosk가 문장을 완성해줄 때마다 여기 순서대로 쌓아두고, 따로 하나씩 번역해요. */
     private val translationQueue = Channel<String>(Channel.UNLIMITED)
+
+    /** 최근 번역된 문장들 (화면엔 이 중 최신 몇 줄만 보여줘요) */
+    private val captionLines = ArrayDeque<String>()
+
+    /** 자막창을 더블탭하면 이 값이 바뀌어요. true면 소리를 들어도 인식/번역을 하지 않아요. */
+    @Volatile
+    private var paused = false
 
     private var mediaProjection: MediaProjection? = null
     private var audioRecord: AudioRecord? = null
@@ -226,6 +238,9 @@ class TranslateOverlayService : Service() {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.overlay_caption, null)
         captionText = view.findViewById(R.id.textCaption)
+        val captionBox = view.findViewById<View>(R.id.captionBox)
+        val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
+        val resizeHandleRight = view.findViewById<View>(R.id.resizeHandleRight)
 
         val overlayType =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -233,8 +248,14 @@ class TranslateOverlayService : Service() {
             else
                 @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
 
+        // 자막창 너비의 기본값/최소값/최대값 (dp를 화면 px로 변환)
+        val density = resources.displayMetrics.density
+        val defaultWidthPx = (260 * density).toInt()
+        val minWidthPx = (140 * density).toInt()
+        val maxWidthPx = resources.displayMetrics.widthPixels - (40 * density).toInt()
+
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            defaultWidthPx,
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -246,13 +267,26 @@ class TranslateOverlayService : Service() {
             y = 160
         }
 
-        // 손가락으로 자막창을 드래그해서 원하는 위치로 옮길 수 있게
+        // 손가락으로 자막창(가운데 박스)을 드래그해서 원하는 위치로 옮길 수 있게
         var initialX = 0
         var initialY = 0
         var touchX = 0f
         var touchY = 0f
 
-        view.setOnTouchListener { _, event ->
+        // 더블탭 = 일시정지/재생 전환, 길게 누르기 = 완전히 끄기(창이 사라져요)
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                togglePause()
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                turnOff()
+            }
+        })
+
+        captionBox.setOnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -274,12 +308,74 @@ class TranslateOverlayService : Service() {
             }
         }
 
+        // 오른쪽 가장자리를 좌우로 끌면 너비가 바뀌어요 (왼쪽 끝은 그대로 고정)
+        var resizeStartWidth = 0
+        var resizeStartX = 0f
+
+        resizeHandleRight.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeStartWidth = params.width
+                    resizeStartX = event.rawX
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val newWidth = (resizeStartWidth + (event.rawX - resizeStartX).toInt())
+                        .coerceIn(minWidthPx, maxWidthPx)
+                    params.width = newWidth
+                    try {
+                        windowManager.updateViewLayout(view, params)
+                    } catch (_: Exception) {
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 왼쪽 가장자리를 끌면 오른쪽 끝은 그대로 두고 왼쪽만 늘었다 줄었다 해요
+        resizeHandleLeft.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeStartWidth = params.width
+                    resizeStartX = event.rawX
+                    initialX = params.x
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val delta = (event.rawX - resizeStartX).toInt()
+                    val newWidth = (resizeStartWidth - delta).coerceIn(minWidthPx, maxWidthPx)
+                    val actualDelta = resizeStartWidth - newWidth
+                    params.width = newWidth
+                    params.x = initialX + actualDelta
+                    try {
+                        windowManager.updateViewLayout(view, params)
+                    } catch (_: Exception) {
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
         try {
             windowManager.addView(view, params)
             overlayView = view
         } catch (e: Exception) {
             // 오버레이 권한이 없는 등 예외 상황 - 알림으로만 상태를 알림
         }
+    }
+
+    /** 자막창을 더블탭했을 때: 일시정지 중이면 다시 재생, 재생 중이면 일시정지해요. */
+    private fun togglePause() {
+        paused = !paused
+        // 일시정지 중엔 자막창을 살짝 흐리게 해서 지금 멈춰있다는 걸 알 수 있게 해요.
+        overlayView?.let { v -> v.post { v.alpha = if (paused) 0.5f else 1f } }
+    }
+
+    /** 자막창을 길게 눌렀을 때: 서비스를 완전히 끄고 자막창도 화면에서 사라지게 해요. */
+    private fun turnOff() {
+        stopSelf()
     }
 
     private fun startAudioCapture(projection: MediaProjection) {
@@ -319,7 +415,6 @@ class TranslateOverlayService : Service() {
 
         serviceScope.launch {
             var lastFinalAt = System.currentTimeMillis()
-            var lastPartialUpdateAt = 0L
 
             while (capturing) {
                 val read = try {
@@ -328,6 +423,12 @@ class TranslateOverlayService : Service() {
                     break
                 }
                 if (read <= 0) continue
+
+                if (paused) {
+                    // 일시정지 중이에요 → 오디오는 계속 읽어서 버려요(버퍼가 안 넘치게),
+                    // 인식/번역은 하지 않아서 자막창은 그대로 유지돼요.
+                    continue
+                }
 
                 val client = speechClient ?: continue // 음성인식 모델이 아직 준비 안 됐으면 건너뜀
                 val now = System.currentTimeMillis()
@@ -347,14 +448,6 @@ class TranslateOverlayService : Service() {
                     if (forced != null) {
                         translationQueue.trySend(forced)
                     }
-                } else if (now - lastPartialUpdateAt >= PARTIAL_UPDATE_INTERVAL_MS) {
-                    // 아직 말하는 중이에요 → 지금까지 들린 내용을 화면에 살짝 보여줘서
-                    // "멈춘 게 아니라 듣고 있다"는 걸 알 수 있게 해요.
-                    lastPartialUpdateAt = now
-                    val partial = client.partialText()
-                    if (partial.isNotBlank()) {
-                        updateCaptionSync("듣는 중… $partial")
-                    }
                 }
             }
         }
@@ -367,7 +460,17 @@ class TranslateOverlayService : Service() {
         } catch (e: Exception) {
             text
         }
-        updateCaption(translated)
+        appendCaptionLine(translated)
+    }
+
+    /** 번역된 문장을 자막창 맨 아래에 추가하고, 화면엔 최근 [MAX_CAPTION_LINES]줄까지만 남겨요. */
+    private suspend fun appendCaptionLine(line: String) {
+        if (line.isBlank()) return
+        captionLines.addLast(line)
+        while (captionLines.size > MAX_CAPTION_LINES) {
+            captionLines.removeFirst()
+        }
+        updateCaption(captionLines.joinToString("\n"))
     }
 
     private suspend fun updateCaption(text: String) {
