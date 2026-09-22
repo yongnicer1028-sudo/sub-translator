@@ -1,21 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+    자막창 레이아웃.
+    - captionBox: 실제로 번역 글자가 보이는 검은 박스 (더블탭=일시정지/재생, 길게 누르면=끄기, 드래그=이동)
+    - resizeHandleLeft / resizeHandleRight: 박스 양쪽 가장자리의 좁은 영역. 여기를 좌우로 끌면
+      자막창 너비가 늘었다 줄었다 해요. (세로 크기는 최근 번역 5줄에 맞춰 자동으로 정해져요)
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:background="@drawable/overlay_bubble_bg">
+    android:layout_height="wrap_content">
 
-    <TextView
-        android:id="@+id/textCaption"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:id="@+id/captionBox"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:gravity="center"
-        android:maxWidth="320dp"
-        android:minWidth="120dp"
-        android:text="번역 대기 중…"
-        android:textColor="@color/overlay_text"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:orientation="vertical"
+        android:background="@drawable/overlay_bubble_bg">
 
-</LinearLayout>
+        <TextView
+            android:id="@+id/textCaption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="start"
+            android:lineSpacingExtra="3dp"
+            android:text="번역 대기 중…"
+            android:textColor="@color/overlay_text"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <View
+        android:id="@+id/resizeHandleLeft"
+        android:layout_width="16dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start" />
+
+    <View
+        android:id="@+id/resizeHandleRight"
+        android:layout_width="16dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end" />
+
+</FrameLayout>
