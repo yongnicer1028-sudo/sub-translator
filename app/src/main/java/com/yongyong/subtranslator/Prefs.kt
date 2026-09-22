@@ -13,6 +13,8 @@ object Prefs {
     const val LANG_CHINESE = "zh"
     const val LANG_JAPANESE = "ja"
     const val LANG_ENGLISH = "en"
+    const val LANG_RUSSIAN = "ru"
+    const val LANG_GERMAN = "de"
 
     fun getLanguage(context: Context): String =
         prefs(context).getString(KEY_LANGUAGE, LANG_CHINESE) ?: LANG_CHINESE

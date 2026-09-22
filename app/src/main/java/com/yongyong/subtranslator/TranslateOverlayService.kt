@@ -138,6 +138,8 @@ class TranslateOverlayService : Service() {
         val mlkitSourceLang = when (language) {
             Prefs.LANG_JAPANESE -> TranslateLanguage.JAPANESE
             Prefs.LANG_ENGLISH -> TranslateLanguage.ENGLISH
+            Prefs.LANG_RUSSIAN -> TranslateLanguage.RUSSIAN
+            Prefs.LANG_GERMAN -> TranslateLanguage.GERMAN
             else -> TranslateLanguage.CHINESE
         }
 

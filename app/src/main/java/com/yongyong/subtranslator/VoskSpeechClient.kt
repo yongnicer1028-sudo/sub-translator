@@ -87,6 +87,8 @@ class VoskSpeechClient private constructor(private val model: Model) {
         private fun modelInfo(language: String): Pair<String, String> = when (language) {
             Prefs.LANG_JAPANESE -> "ja" to "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
             Prefs.LANG_ENGLISH -> "en" to "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+            Prefs.LANG_RUSSIAN -> "ru" to "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
+            Prefs.LANG_GERMAN -> "de" to "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"
             else -> "cn" to "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
         }
 
