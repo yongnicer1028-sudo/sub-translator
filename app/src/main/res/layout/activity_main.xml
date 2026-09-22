@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="영상 실시간 번역 자막"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_dark" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="20dp"
+            android:text="영상 앱을 켠 상태에서 시작 버튼을 누르면, 소리를 실시간으로 인식해서 화면 위에 한국어 자막을 띄워줍니다. 음성인식·번역 모두 완전 무료·오프라인(Vosk + ML Kit)으로 처리돼요."
+            android:textSize="13sp"
+            android:textColor="#66707A" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="영상 속 언어 선택"
+            android:textStyle="bold"
+            android:layout_marginTop="8dp" />
+
+        <RadioGroup
+            android:id="@+id/radioLanguage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp">
+
+            <RadioButton
+                android:id="@+id/radioChinese"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="중국어"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/radioJapanese"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="일본어" />
+
+            <RadioButton
+                android:id="@+id/radioEnglish"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="영어" />
+        </RadioGroup>
+
+        <Button
+            android:id="@+id/btnSaveSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="설정 저장" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E3E7ED"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="20dp" />
+
+        <TextView
+            android:id="@+id/textStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="상태: 대기 중"
+            android:textColor="#66707A"
+            android:layout_marginBottom="14dp" />
+
+        <Button
+            android:id="@+id/btnStart"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="번역 시작" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="10dp"
+            android:text="번역 중지"
+            android:enabled="false" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="사용법: 설정 저장 → 번역 시작 → 권한 3개 모두 허용 → 유튜브/틱톡 등 영상 앱으로 이동해서 재생하면 화면 위에 작은 자막창이 떠요. 자막창은 손가락으로 드래그해서 위치를 옮길 수 있어요.\n\n※ 언어를 처음 사용할 때는 음성인식 모델을 한 번 내려받아요 (40~50MB, 와이파이 추천). 그 다음부터는 인터넷 없이도 되고, 돈도 전혀 안 나가요."
+            android:textSize="12sp"
+            android:textColor="#8A939C" />
+
+    </LinearLayout>
+</ScrollView>
