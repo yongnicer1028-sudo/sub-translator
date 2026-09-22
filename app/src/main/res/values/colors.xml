@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_primary">#2F6FED</color>
+    <color name="brand_primary_dark">#1E4FBF</color>
+    <color name="bg_light">#F5F7FB</color>
+    <color name="text_dark">#1B1F27</color>
+    <color name="overlay_bg">#CC101318</color>
+    <color name="overlay_text">#FFFFFF</color>
+</resources>
