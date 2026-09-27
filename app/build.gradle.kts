@@ -11,8 +11,8 @@ android {
         applicationId = "com.yongyong.subtranslator"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2-nllb200-ondevice-translate"
     }
 
     // ⚠ 이 서명 설정이 없으면, 깃허브에서 새로 빌드할 때마다 매번 다른 임시 서명이 생겨서
@@ -50,6 +50,13 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    packaging {
+        // onnxruntime / tokenizers / vosk 네이티브 라이브러리 + Java 서비스 파일이 서로
+        // 겹칠 수 있어서(META-INF/*, libc++_shared.so) 첫 번째 것만 쓰게 해요.
+        resources.pickFirsts.add("META-INF/*")
+        jniLibs.useLegacyPackaging = true; jniLibs.pickFirsts.add("**/libc++_shared.so") // libc++_shared.so 중복 문제 예방
+    }
 }
 
 dependencies {
@@ -58,11 +65,18 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-service:2.8.4")
 
-    // 네트워크 (음성인식 모델을 처음 한 번 내려받을 때만 씀)
+    // 네트워크 (음성인식/번역 모델을 처음 한 번 내려받을 때만 씀)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // 온디바이스 무료 번역 (ML Kit)
-    implementation("com.google.mlkit:translate:17.0.3")
+    // 온디바이스 번역 모델(NLLB-200)을 폰 안에서 돌리는 엔진 (마이크로소프트 공식 ONNX Runtime)
+    // - 예전에 쓰던 ML Kit 번역은 직역투가 심해서, 별도 테스트 앱에서 검증을 마친 이
+    //   NLLB-200 모델로 교체했어요. (자세한 내용은 NllbTranslator.kt 참고)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+
+    // 번역 모델이 쓰는 토크나이저(tokenizer.json)를 그대로 읽어서 문장<->숫자 변환을 해주는 라이브러리.
+    // 언어 코드(zho_Hans, jpn_Jpan, kor_Hang 등)의 내부 숫자값을 직접 하드코딩하지 않고
+    // 이 라이브러리가 tokenizer.json에서 그대로 읽어오게 해서 실수를 줄인다.
+    implementation("ai.djl.huggingface:tokenizers:0.33.0"); implementation("ai.djl.android:tokenizer-native:0.33.0"); runtimeOnly("dev.atsushieno:libcxx-provider:29.0.14206865") // 안드로이드 네이티브 tokenizer + libc++_shared.so 부품 추가 - 없으면 로딩 실패
 
     // 완전 무료 · 오프라인 음성인식 (Vosk) - 인터넷 없이 폰 안에서 처리되고, 분당 과금이 전혀 없어요.
     // 언어별 모델은 딱 한 번만 인터넷으로 내려받고(약 40~50MB), 그다음부터는 계속 무료/오프라인이에요.
@@ -71,5 +85,4 @@ dependencies {
 
     // 비동기 처리
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 }
