@@ -262,7 +262,13 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
     companion object {
         private const val EOS_ID = 2L
         private const val DECODER_START_TOKEN_ID = 2L
-        private const val MAX_NEW_TOKENS = 80
+
+        // 한 토큰을 만들 때마다 디코더를 한 번씩 통째로 다시 돌려야 해서(캐시 없는 구조),
+        // 숫자가 클수록 한 문장 번역이 느려져요. 실시간 자막은 8초 안에 말한 내용
+        // (MAX_UTTERANCE_MS)만 번역하면 되니 그렇게 긴 문장이 나올 일이 없어서, 80 →
+        // 48로 줄였어요. 번역이 눈에 띄게 느려졌다는 문제와, 모델이 끝맺음 토큰을
+        // 놓치고 엉뚱한 말을 계속 이어붙이는(할루시네이션) 문제를 동시에 줄여줘요.
+        private const val MAX_NEW_TOKENS = 48
 
         // 그리디 방식은 가끔 같은 표현을 끝없이 반복하는 버그가 있어서(예:
         // "아니, 아니, 아니, ..."), 최근에 나온 표현이 이미 나온 적 있으면
@@ -276,11 +282,17 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
      * 모델을 불러올 때 쓰는 옵션이에요. 기본값 그대로 두면 그래프 최적화 작업과 여러
      * 스레드용 계산 버퍼 때문에 "불러오는 바로 그 순간"에 메모리를 더 많이 써요 —
      * 이 앱은 음성인식(Vosk) 모델도 같이 메모리에 떠 있어서 더더욱 아껴야 해요.
+     *
+     * ⚠ 스레드를 1개로 두면(옛날 설정) 태블릿에서 영상 재생 + 음성인식 + 번역이 동시에
+     * 돌아갈 때 번역 하나에 너무 오래 걸리고(체감상 매우 느림), 그동안 기기 전체가
+     * 버벅여서 다른 화면 터치도 잘 안 먹는 것처럼 느껴질 수 있어요. M2M100-418M은
+     * NLLB-200보다 가벼워서 메모리 여유가 좀 더 있으니, 스레드를 2개로 늘려서 번역
+     * 속도를 좀 더 확보했어요 (그 대신 메모리를 아주 조금 더 써요).
      */
     private fun lightweightSessionOptions(): OrtSession.SessionOptions =
         OrtSession.SessionOptions().apply {
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
-            setIntraOpNumThreads(1)
+            setIntraOpNumThreads(2)
         }
 
     private val encoderSession: OrtSession = env.createSession(paths.encoderPath, lightweightSessionOptions())
