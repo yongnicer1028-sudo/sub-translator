@@ -33,10 +33,26 @@ import java.util.zip.ZipInputStream
  * 기본값은 꺼짐으로 두고, 필요한 사람만 선택하게 했어요. 또한 모델을 불러오다가
  * 메모리가 부족해지는 경우(OutOfMemoryError)도 이제 앱을 죽이지 않고 안전하게
  * 실패 메시지만 보여주도록 고쳤어요(load() 참고).
+ *
+ * ⚠ v4 변경점: 정확도 우선(큰) 모델은 태블릿에서 영상 재생과 같이 돌리면 메모리가
+ * 부족해져서 꺼지는 문제가 있어서, 모델 크기는 그대로(작은 모델) 두고 번역 품질을
+ * 높이는 방법을 대신 넣었어요 — Vosk가 단어 하나하나마다 "이 단어가 맞을 확률
+ * (신뢰도)"도 같이 알려주게 설정하고(setWords), 신뢰도가 너무 낮은 단어는 아마
+ * 잘못 들었을 가능성이 커서 번역기에 넘기기 전에 걸러내요(extractText 참고).
+ * 잘못 들은 단어를 그대로 번역기에 넘기면 번역도 같이 엉뚱해지니, 여기서 먼저
+ * 걸러주면 모델은 안 바꿔도 번역 결과가 더 깨끗해져요.
  */
+
+/** 이 값보다 신뢰도(conf)가 낮은 단어는 걸러내요. 너무 높게 잡으면 멀쩡한 단어까지
+ *  걸러질 수 있어서, 확실히 잘못 들은 것 같은 단어만 걸러내도록 낮게 잡았어요. */
+private const val MIN_WORD_CONFIDENCE = 0.3
+
 class VoskSpeechClient private constructor(private val model: Model) {
 
-    private val recognizer = Recognizer(model, 16000.0f)
+    private val recognizer = Recognizer(model, 16000.0f).apply {
+        // 위 v4 설명 참고: 단어별 신뢰도를 결과에 포함시켜요.
+        setWords(true)
+    }
 
     /**
      * 오디오 조각(pcm16 = 16bit/16000Hz/mono)을 계속 이어서 넣어주는 함수예요.
@@ -70,13 +86,35 @@ class VoskSpeechClient private constructor(private val model: Model) {
      */
     fun flush(): String? = extractText(recognizer.getFinalResult())
 
-    private fun extractText(json: String): String? =
-        try {
-            val text = JSONObject(json).optString("text", "").trim()
-            if (text.isBlank()) null else text
+    private fun extractText(json: String): String? {
+        return try {
+            val root = JSONObject(json)
+            val rawText = root.optString("text", "").trim()
+            if (rawText.isBlank()) return null
+
+            // setWords(true) 덕분에 "result" 배열로 단어별 신뢰도가 같이 와요. 신뢰도가
+            // MIN_WORD_CONFIDENCE보다 낮은 단어(아마 잘못 들었을 가능성이 큰 단어)는
+            // 걸러내고 나머지만 이어붙여요. (신뢰도 정보가 없는 경우엔 원문 그대로 써요)
+            val wordsArray = root.optJSONArray("result")
+            if (wordsArray == null || wordsArray.length() == 0) return rawText
+
+            val keptWords = mutableListOf<String>()
+            for (i in 0 until wordsArray.length()) {
+                val w = wordsArray.optJSONObject(i) ?: continue
+                val word = w.optString("word", "")
+                val conf = w.optDouble("conf", 1.0)
+                if (word.isNotBlank() && conf >= MIN_WORD_CONFIDENCE) {
+                    keptWords.add(word)
+                }
+            }
+
+            // 전부 다 걸러졌다면(드문 경우), 자막이 아예 안 뜨는 것보다는 원래 인식된
+            // 문장이라도 보여주는 게 나아서 원문 그대로 돌려줘요.
+            if (keptWords.isEmpty()) rawText else keptWords.joinToString(" ")
         } catch (e: Exception) {
             null
         }
+    }
 
     /** 서비스가 끝날 때 모델이 쓰던 메모리를 정리해줘요. */
     fun close() {
