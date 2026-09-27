@@ -76,7 +76,15 @@ dependencies {
     // 번역 모델이 쓰는 토크나이저(tokenizer.json)를 그대로 읽어서 문장<->숫자 변환을 해주는 라이브러리.
     // 언어 코드(zho_Hans, jpn_Jpan, kor_Hang 등)의 내부 숫자값을 직접 하드코딩하지 않고
     // 이 라이브러리가 tokenizer.json에서 그대로 읽어오게 해서 실수를 줄인다.
-    implementation("ai.djl.huggingface:tokenizers:0.33.0"); implementation("ai.djl.android:tokenizer-native:0.33.0"); runtimeOnly("dev.atsushieno:libcxx-provider:29.0.14206865") // 안드로이드 네이티브 tokenizer + libc++_shared.so 부품 추가 - 없으면 로딩 실패
+    // ⚠ ai.djl.huggingface:tokenizers가 데스크톱용 jna(.jar)를 같이 끌고 들어오는데,
+    // 아래 Vosk가 쓰는 jna(.aar)와 같은 클래스를 다른 형태로 중복시켜서 빌드가 깨져요
+    // (checkDebugDuplicateClasses 실패). 안드로이드에서는 tokenizer-native가 실제
+    // 네이티브 라이브러리를 제공하니, jna는 Vosk 쪽 것만 쓰도록 제외해요.
+    implementation("ai.djl.huggingface:tokenizers:0.33.0") {
+        exclude(group = "net.java.dev.jna", module = "jna")
+    }
+    implementation("ai.djl.android:tokenizer-native:0.33.0")
+    runtimeOnly("dev.atsushieno:libcxx-provider:29.0.14206865") // 안드로이드 네이티브 tokenizer + libc++_shared.so 부품 추가 - 없으면 로딩 실패
 
     // 완전 무료 · 오프라인 음성인식 (Vosk) - 인터넷 없이 폰 안에서 처리되고, 분당 과금이 전혀 없어요.
     // 언어별 모델은 딱 한 번만 인터넷으로 내려받고(약 40~50MB), 그다음부터는 계속 무료/오프라인이에요.
