@@ -26,16 +26,12 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.Translator
-import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,7 +39,7 @@ import kotlinx.coroutines.withContext
  * 1. 영상 앱이 재생 중인 소리를 내부적으로 가져오고 (마이크 아님, 이어폰 껴도 됨)
  * 2. Vosk(완전 무료, 오프라인 음성인식)에 소리를 끊김없이 계속 흘려보내면서, Vosk가
  *    "말이 한 번 끝났다"고 스스로 판단하는 순간마다 문장을 만들고
- * 3. ML Kit(완전 무료, 오프라인)으로 한국어로 번역하고
+ * 3. NLLB-200(완전 무료, 온디바이스 번역 모델)으로 한국어로 번역하고
  * 4. 화면 위에 떠 있는 작은 자막창에 표시해요.
  *
  * ⚠ v2 변경점: 예전에는 소리를 3.5초 단위로 뚝뚝 잘라서 인식했더니 문장이 중간에
@@ -56,6 +52,12 @@ import kotlinx.coroutines.withContext
  * ⚠ v3 변경점: 자막창엔 번역된 한국어만 보여줘요(중간 인식 결과는 안 보여줘요), 최근
  * 5줄까지는 화면에 남아있게 했어요. 자막창 가장자리를 끌면 너비를 조절할 수 있고,
  * 더블탭하면 일시정지/재생, 길게 누르면 꺼져요(창이 사라져요).
+ *
+ * ⚠ v4 변경점: 번역 엔진을 ML Kit에서 NLLB-200-distilled-600M(온디바이스 모델)으로
+ * 바꿨어요. ML Kit 번역이 직역투로 어색하다는 문제가 있었는데, 별도 테스트 앱에서
+ * 검증해보니 NLLB-200이 훨씬 자연스러웠어요. 최초 한 번만 번역 모델(약 900MB)을
+ * 받으면 그 다음부터는 완전히 오프라인/무료로 동작해요. (자세한 내용은
+ * NllbTranslator.kt 참고)
  */
 class TranslateOverlayService : Service() {
 
@@ -98,8 +100,11 @@ class TranslateOverlayService : Service() {
     private var overlayView: View? = null
     private var captionText: TextView? = null
 
-    private var translator: Translator? = null
+    private var translator: NllbTranslator? = null
     private var speechClient: VoskSpeechClient? = null
+
+    /** onStartCommand에서 선택된 언어를 FLORES-200 코드로 바꿔서 저장해둬요. */
+    private var sourceFloresLang: String = "zho_Hans"
 
     override fun onCreate() {
         super.onCreate()
@@ -135,32 +140,34 @@ class TranslateOverlayService : Service() {
         }
 
         val language = Prefs.getLanguage(this)
-        val mlkitSourceLang = when (language) {
-            Prefs.LANG_JAPANESE -> TranslateLanguage.JAPANESE
-            Prefs.LANG_ENGLISH -> TranslateLanguage.ENGLISH
-            Prefs.LANG_RUSSIAN -> TranslateLanguage.RUSSIAN
-            Prefs.LANG_GERMAN -> TranslateLanguage.GERMAN
-            else -> TranslateLanguage.CHINESE
-        }
+        sourceFloresLang = floresLangCode(language)
 
         showOverlay()
         updateCaptionSync("준비 중…")
 
-        val options = TranslatorOptions.Builder()
-            .setSourceLanguage(mlkitSourceLang)
-            .setTargetLanguage(TranslateLanguage.KOREAN)
-            .build()
-        val t = Translation.getClient(options)
-        translator = t
-
-        // 번역 모델(ML Kit) 준비 → 음성인식 모델(Vosk) 준비, 순서대로 진행합니다.
-        // 둘 다 완전 무료고, 처음 한 번만 인터넷으로 받아두면 그 다음부터는 오프라인으로 동작해요.
+        // 번역 모델(NLLB-200, 온디바이스) 준비 → 음성인식 모델(Vosk) 준비, 순서대로
+        // 진행합니다. 번역 모델은 최초 한 번만 인터넷으로 받아두면(약 900MB, 와이파이
+        // 권장) 그 다음부터는 완전히 오프라인으로 동작하고 비용도 전혀 없어요.
         serviceScope.launch {
             try {
-                updateCaption("번역 모델을 준비하는 중… (처음 한 번은 시간이 좀 걸려요)")
-                t.downloadModelIfNeeded().await()
-            } catch (e: Exception) {
-                updateCaption("번역 모델을 받지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요.")
+                val existingPaths = ModelManager.isDownloaded(applicationContext)
+                val paths = existingPaths ?: run {
+                    updateCaption("번역 모델을 받는 중이에요… (처음 한 번만, 약 900MB, 와이파이 권장)")
+                    ModelManager.download(applicationContext) { percent ->
+                        updateCaptionSync("번역 모델을 받는 중… ($percent%)")
+                    }
+                }
+                updateCaption("번역 모델을 불러오는 중…")
+                translator = withContext(Dispatchers.IO) { NllbTranslator(paths) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val reason = if (e is OutOfMemoryError) {
+                    "메모리 부족 (이 기기에서 번역 모델을 불러오기엔 램이 부족해요)"
+                } else {
+                    e.message ?: e.toString()
+                }
+                updateCaption("번역 모델 준비 실패 - $reason")
                 return@launch
             }
 
@@ -458,7 +465,9 @@ class TranslateOverlayService : Service() {
     private suspend fun translateAndShow(text: String) {
         val t = translator ?: return
         val translated = try {
-            t.translate(text).await()
+            withContext(Dispatchers.Default) {
+                t.translate(text, sourceFloresLang, NLLB_TARGET_LANG).text
+            }
         } catch (e: Exception) {
             text
         }
