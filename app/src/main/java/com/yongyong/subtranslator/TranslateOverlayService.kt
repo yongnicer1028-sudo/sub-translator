@@ -84,6 +84,13 @@ import kotlinx.coroutines.withContext
  * 문장이 되어 번역이 느리게 느껴지는 문제가 있어서, 강제로 문장을 끊는 기준을
  * 8초 → 5초로 줄였어요(MAX_UTTERANCE_MS 참고). 자막이 더 짧은 단위로, 더 자주
  * 뜨게 돼요.
+ *
+ * ⚠ v9 변경점: 진단용으로 원문(음성인식 결과)을 같이 보여준 결과, 번역이 이상했던
+ * 진짜 원인이 번역기가 아니라 음성인식(Vosk) 자체가 알아듣는 단계였다는 게
+ * 확인됐어요. 그래서 설정 화면에 "정확도 우선 모드"를 추가해서, 원하는 사람은
+ * 용량이 큰(약 1~2GB) 더 정확한 모델을 선택할 수 있게 했어요(VoskSpeechClient.kt
+ * 참고). 이 모드는 이 기기 메모리 여유에 따라 다시 꺼짐 문제가 생길 수 있어서
+ * 기본값은 꺼짐이에요.
  */
 class TranslateOverlayService : Service() {
 
@@ -225,11 +232,17 @@ class TranslateOverlayService : Service() {
                 return@launch
             }
 
-            val client = VoskSpeechClient.load(applicationContext, language) { message ->
+            val highAccuracyAsr = Prefs.getAsrHighAccuracy(applicationContext)
+            val client = VoskSpeechClient.load(applicationContext, language, highAccuracyAsr) { message ->
                 updateCaptionSync(message)
             }
             if (client == null) {
-                updateCaption("음성인식 모델을 준비하지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요.")
+                val extraHint = if (highAccuracyAsr) {
+                    " (정확도 우선 모델이 이 기기에 버거울 수 있어요 - 설정 화면에서 다시 꺼보세요)"
+                } else {
+                    ""
+                }
+                updateCaption("음성인식 모델을 준비하지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요.$extraHint")
                 return@launch
             }
             speechClient = client

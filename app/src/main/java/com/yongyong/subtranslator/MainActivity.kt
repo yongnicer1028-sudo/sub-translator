@@ -75,14 +75,17 @@ class MainActivity : AppCompatActivity() {
         val savedLang = Prefs.getLanguage(this)
         val savedIndex = languageOptions.indexOfFirst { it.first == savedLang }
         binding.spinnerLanguage.setSelection(if (savedIndex >= 0) savedIndex else 0)
+        binding.checkboxHighAccuracyAsr.isChecked = Prefs.getAsrHighAccuracy(this)
 
         binding.btnSaveSettings.setOnClickListener {
             Prefs.setLanguage(this, selectedLanguage())
+            Prefs.setAsrHighAccuracy(this, binding.checkboxHighAccuracyAsr.isChecked)
             toast("설정을 저장했어요.")
         }
 
         binding.btnStart.setOnClickListener {
             Prefs.setLanguage(this, selectedLanguage())
+            Prefs.setAsrHighAccuracy(this, binding.checkboxHighAccuracyAsr.isChecked)
             checkAndStart()
         }
 

@@ -26,6 +26,13 @@ import java.util.zip.ZipInputStream
  * 지금은 인식기 하나를 계속 살려두고 소리를 끊김없이 계속 흘려보내면서, Vosk 스스로
  * "여기서 문장이 끝났다"고 판단하는 순간에만 문장을 완성해서 돌려주는 방식으로 바꿨어요.
  * (이게 Vosk가 원래 쓰이도록 설계된 정석적인 방법이에요)
+ *
+ * ⚠ v3 변경점: 설정 화면에서 "정확도 우선 모드"를 켤 수 있게 됐어요. 기본은 지금까지
+ * 쓰던 작은 모델 그대로고, 켜면 훨씬 정확하지만 용량이 큰(약 1~2GB) 모델을 대신
+ * 받아서 써요. 용량이 큰 만큼 이 기기 메모리가 부족하면 실행 중 꺼질 수 있어서
+ * 기본값은 꺼짐으로 두고, 필요한 사람만 선택하게 했어요. 또한 모델을 불러오다가
+ * 메모리가 부족해지는 경우(OutOfMemoryError)도 이제 앱을 죽이지 않고 안전하게
+ * 실패 메시지만 보여주도록 고쳤어요(load() 참고).
  */
 class VoskSpeechClient private constructor(private val model: Model) {
 
@@ -84,12 +91,35 @@ class VoskSpeechClient private constructor(private val model: Model) {
     }
 
     companion object {
-        private fun modelInfo(language: String): Pair<String, String> = when (language) {
-            Prefs.LANG_JAPANESE -> "ja" to "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
-            Prefs.LANG_ENGLISH -> "en" to "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
-            Prefs.LANG_RUSSIAN -> "ru" to "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
-            Prefs.LANG_GERMAN -> "de" to "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"
-            else -> "cn" to "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
+        // highAccuracy가 false(기본값)일 땐 예전 그대로 작은 모델(40~50MB)을 써요 - 태그
+        // 이름도 그대로 유지해서, 이미 받아둔 사람은 다시 받을 필요가 없어요.
+        //
+        // highAccuracy가 true일 땐 훨씬 정확하지만 용량이 큰(약 1~2GB) 모델을 대신
+        // 받아요. 폴더 이름(태그)을 아예 다르게 줘서 작은 모델과 따로 저장되게 했어요 -
+        // 그래야 설정에서 껐다 켰다 해도 매번 다시 받지 않아요.
+        //
+        // ⚠ 이 큰 모델들의 정확한 파일 이름은 지금 이 작업 환경에서 vosk 공식 사이트
+        // 접속이 막혀 있어서 직접 확인은 못 했고, 기억을 바탕으로 적어둔 값이에요.
+        // 혹시 특정 언어에서 "다운로드 실패" 메시지가 뜨면(파일 이름이 바뀌었을 수
+        // 있어요), 그 언어를 알려주시면 정확한 주소를 다시 찾아서 고쳐드릴게요 -
+        // 실패해도 앱이 꺼지지 않고 이 메시지만 뜨니 안심하세요.
+        private fun modelInfo(language: String, highAccuracy: Boolean): Pair<String, String> {
+            if (highAccuracy) {
+                return when (language) {
+                    Prefs.LANG_JAPANESE -> "ja-large" to "https://alphacephei.com/vosk/models/vosk-model-ja-0.22.zip"
+                    Prefs.LANG_ENGLISH -> "en-large" to "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"
+                    Prefs.LANG_RUSSIAN -> "ru-large" to "https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip"
+                    Prefs.LANG_GERMAN -> "de-large" to "https://alphacephei.com/vosk/models/vosk-model-de-0.21.zip"
+                    else -> "cn-large" to "https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip"
+                }
+            }
+            return when (language) {
+                Prefs.LANG_JAPANESE -> "ja" to "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
+                Prefs.LANG_ENGLISH -> "en" to "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+                Prefs.LANG_RUSSIAN -> "ru" to "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
+                Prefs.LANG_GERMAN -> "de" to "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"
+                else -> "cn" to "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
+            }
         }
 
         /**
@@ -101,21 +131,39 @@ class VoskSpeechClient private constructor(private val model: Model) {
          *
          * onProgress: 지금 뭘 하고 있는지 화면에 보여주고 싶을 때 쓰는 콜백이에요.
          */
-        fun load(context: Context, language: String, onProgress: (String) -> Unit): VoskSpeechClient? {
+        fun load(
+            context: Context,
+            language: String,
+            highAccuracy: Boolean,
+            onProgress: (String) -> Unit
+        ): VoskSpeechClient? {
             return try {
-                val (tag, url) = modelInfo(language)
+                val (tag, url) = modelInfo(language, highAccuracy)
                 val modelDir = File(context.filesDir, "vosk-model-$tag")
 
                 var modelRoot = findModelRoot(modelDir)
                 if (modelRoot == null) {
-                    onProgress("음성인식 모델을 내려받는 중이에요… (이 언어는 처음이라 한 번만 받으면 돼요, 40~50MB 정도)")
-                    downloadAndUnzip(url, modelDir)
+                    val sizeHint = if (highAccuracy) {
+                        "정확도 우선 모델이라 용량이 커요, 약 1~2GB, 와이파이 꼭 확인해주세요"
+                    } else {
+                        "이 언어는 처음이라 한 번만 받으면 돼요, 40~50MB 정도"
+                    }
+                    onProgress("음성인식 모델을 내려받는 중이에요… ($sizeHint)")
+                    // 용량이 큰(정확도 우선) 모델은 받는 데 시간이 꽤 걸릴 수 있어서,
+                    // 화면이 멈춘 것처럼 보이지 않게 진행률(%)도 같이 보여줘요.
+                    downloadAndUnzip(url, modelDir) { percent ->
+                        onProgress("음성인식 모델을 내려받는 중… ($percent%, $sizeHint)")
+                    }
                     modelRoot = findModelRoot(modelDir)
                 }
                 if (modelRoot == null) return null
 
                 VoskSpeechClient(Model(modelRoot.absolutePath))
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // 예전엔 Exception만 잡았는데, 메모리가 부족할 때 나는 OutOfMemoryError는
+                // Exception이 아니라 Error라서 여기서 못 잡히고 서비스 전체가 조용히
+                // 죽어버릴 수 있었어요. 정확도 우선(용량 큰) 모델을 추가하면서 이 위험이
+                // 커져서, Throwable로 넓혀 항상 안전하게 null을 돌려주게 했어요.
                 null
             }
         }
@@ -130,7 +178,7 @@ class VoskSpeechClient private constructor(private val model: Model) {
             return dir.listFiles()?.firstOrNull { it.isDirectory && File(it, "conf").isDirectory }
         }
 
-        private fun downloadAndUnzip(url: String, destDir: File) {
+        private fun downloadAndUnzip(url: String, destDir: File, onPercent: (Int) -> Unit) {
             if (destDir.exists()) destDir.deleteRecursively()
             destDir.mkdirs()
 
@@ -146,7 +194,28 @@ class VoskSpeechClient private constructor(private val model: Model) {
                 }
                 val body = response.body ?: throw IOException("음성인식 모델 응답이 비어있어요")
 
-                ZipInputStream(body.byteStream()).use { zis ->
+                // 파일 크기를 미리 알 수 있으면(대부분의 경우), 내려받은 바이트 수를 세서
+                // 진행률(%)을 계산해요. 크기를 못 받아오면(드묾) 그냥 0%로 두고, 실패로
+                // 처리하지는 않아요 - 아래에서 1L로 나눗셈만 안전하게 막아둬요.
+                val totalBytes = body.contentLength()
+                var readSoFar = 0L
+                var lastReportedPercent = -1
+                val countingStream = object : java.io.FilterInputStream(body.byteStream()) {
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        val n = super.read(b, off, len)
+                        if (n > 0 && totalBytes > 0) {
+                            readSoFar += n
+                            val percent = ((readSoFar.toDouble() / totalBytes) * 100).toInt().coerceIn(0, 100)
+                            if (percent != lastReportedPercent) {
+                                lastReportedPercent = percent
+                                onPercent(percent)
+                            }
+                        }
+                        return n
+                    }
+                }
+
+                ZipInputStream(countingStream).use { zis ->
                     val buffer = ByteArray(8192)
                     var entry = zis.nextEntry
                     while (entry != null) {
