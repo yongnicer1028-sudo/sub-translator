@@ -1,16 +1,22 @@
 package com.yongyong.subtranslator
 
 // ─────────────────────────────────────────────────────────────────────────
-// 온디바이스(오프라인) 번역 엔진 — NLLB-200-distilled-600M
+// 온디바이스(오프라인) 번역 엔진 — M2M100-418M
 //
 // 예전엔 ML Kit(구글의 무료 온디바이스 번역)을 썼는데, 번역이 직역투로 어색하다는
-// 문제가 있었어요. 별도의 테스트 앱(NllbTranslateTest)에서 이 NLLB-200 모델을 실제
-// 태블릿에 올려 검증한 결과 — 다운로드/메모리 문제 없이 잘 동작했고, 번역도 눈에
-// 띄게 더 자연스러웠어서, 이 앱의 실제 번역 엔진으로 그대로 가져왔어요.
+// 문제가 있었어요. 그래서 별도 테스트 앱에서 검증한 NLLB-200-distilled-600M으로
+// 한번 바꿨는데, 이 모델(약 900MB)이 음성인식(Vosk) 모델과 같이 메모리에 떠
+// 있으니 실제 태블릿에서 영상을 재생하면 메모리가 부족해져서 앱이 조용히 꺼지는
+// 문제가 있었어요. 그래서 같은 테스트 앱에서 이미 따로 검증까지 끝낸, 훨씬 가벼운
+// M2M100-418M(양자화 기준 약 600MB)으로 다시 바꿔서 우선 확실히 동작부터 하게
+// 만들었어요. (번역 품질은 NLLB-200이 조금 더 자연스러웠지만, 지금은 "꺼지지
+// 않고 계속 동작하는 것"이 더 중요해서 이렇게 바꿨어요. 나중에 여유가 되면
+// 다시 NLLB-200으로 바꿔볼 수 있어요)
 //
-// NLLB-200은 언어 코드를 "jpn_Jpan", "kor_Hang" 같은 FLORES-200 표기법으로 써요.
-// 이 앱이 지원하는 5개 언어(중국어/일본어/영어/러시아어/독일어)와 한국어를 전부
-// 모델 하나로 커버할 수 있어요 (언어마다 따로 모델을 받을 필요가 없어요).
+// M2M100은 언어 코드를 "__ja__", "__ko__" 처럼 두 글자 코드 + 밑줄 두 개로
+// 표기해요. 이 앱이 지원하는 5개 언어(중국어/일본어/영어/러시아어/독일어)와
+// 한국어를 전부 모델 하나로 커버할 수 있어요 (언어마다 따로 모델을 받을 필요가
+// 없어요).
 //
 // ⚠️ 그리디(매번 제일 확률 높은 토큰만 고르는) 방식은 가끔 같은 표현을 끝없이
 // 반복하는 유명한 버그가 있어서, "최근 나온 표현이 이미 나왔으면 그 다음 토큰은
@@ -31,16 +37,16 @@ import java.util.concurrent.TimeUnit
 
 private const val NLLB_TAG = "NllbTranslator"
 
-/** 번역 목표 언어는 항상 한국어예요. */
-const val NLLB_TARGET_LANG = "kor_Hang"
+/** 번역 목표 언어는 항상 한국어예요. (M2M100 언어 코드 표기법: "__xx__") */
+const val TRANSLATE_TARGET_LANG = "__ko__"
 
-/** Prefs에 저장된 소스 언어 코드(zh/ja/en/ru/de)를 NLLB-200이 쓰는 FLORES-200 코드로 바꿔줘요. */
-fun floresLangCode(prefsLanguage: String): String = when (prefsLanguage) {
-    Prefs.LANG_JAPANESE -> "jpn_Jpan"
-    Prefs.LANG_ENGLISH -> "eng_Latn"
-    Prefs.LANG_RUSSIAN -> "rus_Cyrl"
-    Prefs.LANG_GERMAN -> "deu_Latn"
-    else -> "zho_Hans" // Prefs.LANG_CHINESE
+/** Prefs에 저장된 소스 언어 코드(zh/ja/en/ru/de)를 M2M100이 쓰는 "__xx__" 코드로 바꿔줘요. */
+fun m2mLangCode(prefsLanguage: String): String = when (prefsLanguage) {
+    Prefs.LANG_JAPANESE -> "__ja__"
+    Prefs.LANG_ENGLISH -> "__en__"
+    Prefs.LANG_RUSSIAN -> "__ru__"
+    Prefs.LANG_GERMAN -> "__de__"
+    else -> "__zh__" // Prefs.LANG_CHINESE
 }
 
 data class ModelPaths(
@@ -51,15 +57,24 @@ data class ModelPaths(
 
 object ModelManager {
 
-    private const val REPO = "Xenova/nllb-200-distilled-600M"
+    // 태블릿에서 NLLB-200(약 900MB)이 음성인식 모델과 같이 메모리에 떠 있다가
+    // 꺼지는 문제가 있어서, 별도 테스트 앱에서 이미 검증된 더 가벼운
+    // M2M100-418M(양자화 기준 약 600MB)으로 되돌렸어요.
+    private const val REPO = "Xenova/m2m100_418M"
     private const val API_URL = "https://huggingface.co/api/models/$REPO"
     private const val FILE_BASE_URL = "https://huggingface.co/$REPO/resolve/main/"
-    private const val TOKENIZER_URL = "${FILE_BASE_URL}tokenizer.json"
+
+    // M2M100 저장소 원본 tokenizer.json에는 merge 규칙 1,053개가 vocab에 없는
+    // 결과를 만드는 버그가 있어서, 별도 테스트 앱에서 미리 고쳐서 올려둔 버전을
+    // 그대로 가져와요.
+    private const val TOKENIZER_URL =
+        "https://github.com/yongnicer1028-sudo/nllb-translate-test/releases/download/tokenizer-fixed-m2m100/tokenizer.json"
 
     // 파일 선택 로직(resolveFileNames)이나 모델 자체를 나중에 바꾸면 이 숫자를 올려주세요.
-    // 그래야 기기에 이미 받아둔 옛날 파일을 무시하고 새로 받아요.
-    private const val MODEL_SCHEMA_VERSION = 1
-    private const val TOKENIZER_VERSION = 1
+    // 그래야 기기에 이미 받아둔 (NLLB-200 같은) 옛날 파일을 무시하고 새로 받아요.
+    // NLLB-200 → M2M100으로 모델을 바꿨으니 이번엔 값을 올려요.
+    private const val MODEL_SCHEMA_VERSION = 2
+    private const val TOKENIZER_VERSION = 2
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -282,7 +297,7 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
         }
     }
 
-    /** 문자열로 된 언어 코드(예: "jpn_Jpan")의 실제 내부 숫자 id를 tokenizer.json에서 읽어와요. */
+    /** 문자열로 된 언어 코드(예: "__ja__")의 실제 내부 숫자 id를 tokenizer.json에서 읽어와요. */
     private fun langTokenId(langCode: String): Long {
         val encoding = tokenizer.encode(langCode, false, false)
         val ids = encoding.ids

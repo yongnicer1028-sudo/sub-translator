@@ -17,6 +17,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -39,7 +40,7 @@ import kotlinx.coroutines.withContext
  * 1. 영상 앱이 재생 중인 소리를 내부적으로 가져오고 (마이크 아님, 이어폰 껴도 됨)
  * 2. Vosk(완전 무료, 오프라인 음성인식)에 소리를 끊김없이 계속 흘려보내면서, Vosk가
  *    "말이 한 번 끝났다"고 스스로 판단하는 순간마다 문장을 만들고
- * 3. NLLB-200(완전 무료, 온디바이스 번역 모델)으로 한국어로 번역하고
+ * 3. M2M100(완전 무료, 온디바이스 번역 모델)으로 한국어로 번역하고
  * 4. 화면 위에 떠 있는 작은 자막창에 표시해요.
  *
  * ⚠ v2 변경점: 예전에는 소리를 3.5초 단위로 뚝뚝 잘라서 인식했더니 문장이 중간에
@@ -53,11 +54,17 @@ import kotlinx.coroutines.withContext
  * 5줄까지는 화면에 남아있게 했어요. 자막창 가장자리를 끌면 너비를 조절할 수 있고,
  * 더블탭하면 일시정지/재생, 길게 누르면 꺼져요(창이 사라져요).
  *
- * ⚠ v4 변경점: 번역 엔진을 ML Kit에서 NLLB-200-distilled-600M(온디바이스 모델)으로
- * 바꿨어요. ML Kit 번역이 직역투로 어색하다는 문제가 있었는데, 별도 테스트 앱에서
- * 검증해보니 NLLB-200이 훨씬 자연스러웠어요. 최초 한 번만 번역 모델(약 900MB)을
- * 받으면 그 다음부터는 완전히 오프라인/무료로 동작해요. (자세한 내용은
- * NllbTranslator.kt 참고)
+ * ⚠ v4 변경점: 번역 엔진을 ML Kit에서 온디바이스 모델(M2M100-418M)로 바꿨어요.
+ * ML Kit 번역이 직역투로 어색하다는 문제가 있었는데, 별도 테스트 앱에서 검증해보니
+ * 훨씬 자연스러웠어요. 처음엔 더 큰 NLLB-200-distilled-600M(약 900MB)로 했다가,
+ * 음성인식(Vosk) 모델과 같이 메모리에 떠 있으면서 실제로 영상을 재생하면 메모리가
+ * 부족해져 앱이 조용히 꺼지는 문제가 있어서, 이미 검증된 더 가벼운 M2M100-418M
+ * (약 600MB)으로 바꿨어요. 최초 한 번만 번역 모델을 받으면 그 다음부터는 완전히
+ * 오프라인/무료로 동작해요. (자세한 내용은 NllbTranslator.kt 참고)
+ *
+ * ⚠ v5 변경점: 번역 도중 메모리가 부족해지는 경우(OutOfMemoryError)는 일반적인
+ * 오류(Exception)가 아니라서 예전 코드로는 못 잡고 앱 전체가 조용히 죽어버렸어요.
+ * 이제는 그 문장 하나만 번역 실패로 처리하고, 앱과 자막창은 계속 살아있게 고쳤어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -103,8 +110,8 @@ class TranslateOverlayService : Service() {
     private var translator: NllbTranslator? = null
     private var speechClient: VoskSpeechClient? = null
 
-    /** onStartCommand에서 선택된 언어를 FLORES-200 코드로 바꿔서 저장해둬요. */
-    private var sourceFloresLang: String = "zho_Hans"
+    /** onStartCommand에서 선택된 언어를 M2M100 언어 코드("__xx__")로 바꿔서 저장해둬요. */
+    private var sourceLangCode: String = "__zh__"
 
     override fun onCreate() {
         super.onCreate()
@@ -112,9 +119,22 @@ class TranslateOverlayService : Service() {
 
         // 번역 대기열을 계속 지켜보면서, 문장이 들어오는 대로 순서대로 번역해요.
         // (오디오를 듣는 작업과 완전히 따로 돌아가서, 번역하는 동안에도 다음 소리를 놓치지 않아요)
+        //
+        // ⚠ translateAndShow 안에서 어떤 이유로든(특히 메모리 부족) 못 잡은 오류가
+        // 새어나오면, 이 코루틴이 통째로 죽으면서 같은 부모(serviceScope)를 쓰는
+        // 오디오 캡처 코루틴까지 같이 취소되어 "영상 틀면 앱이 꺼지는" 것처럼 보일
+        // 수 있어요. translateAndShow 자체가 이미 Throwable을 다 잡아서 내보내지
+        // 않지만, 혹시 모를 상황에 대비해 여기서도 한 번 더 감싸서 서비스가 절대
+        // 통째로 죽지 않게 해요.
         serviceScope.launch {
-            for (text in translationQueue) {
-                translateAndShow(text)
+            try {
+                for (text in translationQueue) {
+                    translateAndShow(text)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.e("TranslateOverlay", "번역 대기열 처리 중 오류", e)
             }
         }
     }
@@ -140,19 +160,19 @@ class TranslateOverlayService : Service() {
         }
 
         val language = Prefs.getLanguage(this)
-        sourceFloresLang = floresLangCode(language)
+        sourceLangCode = m2mLangCode(language)
 
         showOverlay()
         updateCaptionSync("준비 중…")
 
-        // 번역 모델(NLLB-200, 온디바이스) 준비 → 음성인식 모델(Vosk) 준비, 순서대로
-        // 진행합니다. 번역 모델은 최초 한 번만 인터넷으로 받아두면(약 900MB, 와이파이
+        // 번역 모델(M2M100-418M, 온디바이스) 준비 → 음성인식 모델(Vosk) 준비, 순서대로
+        // 진행합니다. 번역 모델은 최초 한 번만 인터넷으로 받아두면(약 600MB, 와이파이
         // 권장) 그 다음부터는 완전히 오프라인으로 동작하고 비용도 전혀 없어요.
         serviceScope.launch {
             try {
                 val existingPaths = ModelManager.isDownloaded(applicationContext)
                 val paths = existingPaths ?: run {
-                    updateCaption("번역 모델을 받는 중이에요… (처음 한 번만, 약 900MB, 와이파이 권장)")
+                    updateCaption("번역 모델을 받는 중이에요… (처음 한 번만, 약 600MB, 와이파이 권장)")
                     ModelManager.download(applicationContext) { percent ->
                         updateCaptionSync("번역 모델을 받는 중… ($percent%)")
                     }
@@ -466,9 +486,17 @@ class TranslateOverlayService : Service() {
         val t = translator ?: return
         val translated = try {
             withContext(Dispatchers.Default) {
-                t.translate(text, sourceFloresLang, NLLB_TARGET_LANG).text
+                t.translate(text, sourceLangCode, TRANSLATE_TARGET_LANG).text
             }
-        } catch (e: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // 원래는 Exception만 잡았는데, 메모리가 부족해서 나는 OutOfMemoryError는
+            // Exception이 아니라 Error라서 여기서 못 잡히고 서비스 전체가 조용히
+            // 죽어버렸어요(그래서 "듣는 중"이 뜨다가 영상을 틀면 앱이 꺼지는 것처럼
+            // 보였던 원인 중 하나예요). Throwable로 바꿔서 이제는 이 문장 하나만
+            // 번역 실패로 처리하고(원문 그대로 보여줌), 앱과 자막창은 계속 살아있게 해요.
+            Log.e("TranslateOverlay", "번역 실패 (문장 1개, 원문 그대로 표시)", e)
             text
         }
         appendCaptionLine(translated)
