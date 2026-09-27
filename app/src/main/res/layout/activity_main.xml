@@ -24,7 +24,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:layout_marginBottom="20dp"
-            android:text="영상 앱을 켠 상태에서 시작 버튼을 누르면, 소리를 실시간으로 인식해서 화면 위에 한국어 자막을 띄워줍니다. 음성인식·번역 모두 완전 무료·오프라인(Vosk + ML Kit)으로 처리돼요."
+            android:text="영상 앱을 켠 상태에서 시작 버튼을 누르면, 소리를 실시간으로 인식해서 화면 위에 한국어 자막을 띄워줍니다. 음성인식·번역 모두 완전 무료·오프라인(Vosk + 온디바이스 번역 모델)으로 처리돼요."
             android:textSize="13sp"
             android:textColor="#66707A" />
 
@@ -40,6 +40,21 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp" />
+
+        <CheckBox
+            android:id="@+id/checkboxHighAccuracyAsr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="음성인식 정확도 우선 모드" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="켜면 음성인식이 더 정확해지지만, 모델 용량이 훨씬 커요(약 1~2GB, 최초 1회만 다운로드, 와이파이 권장). 이 기기 메모리가 부족하면 번역 중 앱이 꺼질 수 있어요 - 그럴 땐 다시 꺼서 기본 모델로 돌아가세요."
+            android:textSize="12sp"
+            android:textColor="#8A939C" />
 
         <Button
             android:id="@+id/btnSaveSettings"
