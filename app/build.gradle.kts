@@ -11,8 +11,8 @@ android {
         applicationId = "com.yongyong.subtranslator"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2-nllb200-ondevice-translate"
+        versionCode = 3
+        versionName = "0.3-m2m100-ondevice-translate"
     }
 
     // ⚠ 이 서명 설정이 없으면, 깃허브에서 새로 빌드할 때마다 매번 다른 임시 서명이 생겨서
@@ -68,13 +68,15 @@ dependencies {
     // 네트워크 (음성인식/번역 모델을 처음 한 번 내려받을 때만 씀)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // 온디바이스 번역 모델(NLLB-200)을 폰 안에서 돌리는 엔진 (마이크로소프트 공식 ONNX Runtime)
-    // - 예전에 쓰던 ML Kit 번역은 직역투가 심해서, 별도 테스트 앱에서 검증을 마친 이
-    //   NLLB-200 모델로 교체했어요. (자세한 내용은 NllbTranslator.kt 참고)
+    // 온디바이스 번역 모델(M2M100-418M)을 폰 안에서 돌리는 엔진 (마이크로소프트 공식 ONNX Runtime)
+    // - 예전에 쓰던 ML Kit 번역은 직역투가 심해서, 별도 테스트 앱에서 검증을 마친
+    //   모델로 교체했어요. 처음엔 더 큰 NLLB-200을 썼다가, 음성인식(Vosk) 모델과
+    //   같이 메모리에 떠 있으면 메모리가 부족해져서 앱이 꺼지는 문제가 있어서
+    //   더 가벼운 M2M100-418M으로 바꿨어요. (자세한 내용은 NllbTranslator.kt 참고)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
 
     // 번역 모델이 쓰는 토크나이저(tokenizer.json)를 그대로 읽어서 문장<->숫자 변환을 해주는 라이브러리.
-    // 언어 코드(zho_Hans, jpn_Jpan, kor_Hang 등)의 내부 숫자값을 직접 하드코딩하지 않고
+    // 언어 코드("__ja__", "__ko__" 등)의 내부 숫자값을 직접 하드코딩하지 않고
     // 이 라이브러리가 tokenizer.json에서 그대로 읽어오게 해서 실수를 줄인다.
     // ⚠ ai.djl.huggingface:tokenizers가 데스크톱용 jna(.jar)를 같이 끌고 들어오는데,
     // 아래 Vosk가 쓰는 jna(.aar)와 같은 클래스를 다른 형태로 중복시켜서 빌드가 깨져요
