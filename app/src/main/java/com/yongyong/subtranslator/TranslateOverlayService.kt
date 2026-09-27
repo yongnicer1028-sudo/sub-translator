@@ -79,6 +79,11 @@ import kotlinx.coroutines.withContext
  * 미리 내려받아 구조를 확인해야 안전하게 만들 수 있는데 지금 이 작업 환경에서
  * huggingface.co 접속이 막혀 있어서 다음 기회로 미뤄뒀어요 — 태블릿이 실제로
  * 오작동하는 걸 막기 위한 안전한 선택이에요).
+ *
+ * ⚠ v8 변경점: 쉬지 않고 계속 말하는 내레이션 영상에서 8초 분량이 통째로 한
+ * 문장이 되어 번역이 느리게 느껴지는 문제가 있어서, 강제로 문장을 끊는 기준을
+ * 8초 → 5초로 줄였어요(MAX_UTTERANCE_MS 참고). 자막이 더 짧은 단위로, 더 자주
+ * 뜨게 돼요.
  */
 class TranslateOverlayService : Service() {
 
@@ -89,8 +94,12 @@ class TranslateOverlayService : Service() {
         private const val NOTIF_ID = 1001
         private const val SAMPLE_RATE = 16000
 
-        /** 이만큼 말이 안 끊기고 계속되면, 기다리지 않고 지금까지 들은 걸 강제로 한 문장으로 끊어요. */
-        private const val MAX_UTTERANCE_MS = 8000L
+        // 원래는 8초였는데, 내레이션처럼 쉬지 않고 계속 말하는 영상에서는 8초 분량이
+        // 통째로 한 문장이 되어 버려서(문장이 길수록 번역기가 토큰을 더 많이 만들어야
+        // 해서 그만큼 오래 걸려요), 자막이 뜨기까지 체감 지연이 컸어요. 5초로 줄여서
+        // 말이 안 끊기는 영상에서도 더 짧은 단위로 자주 끊어 번역하게 했어요 — 자막이
+        // 더 빨리, 더 자주 뜨는 대신, 문장이 끊기는 지점이 조금 더 어색할 수 있어요.
+        private const val MAX_UTTERANCE_MS = 5000L
 
         /** 자막창에 최근 번역을 몇 개까지 남겨둘지 */
         private const val MAX_CAPTION_LINES = 10
