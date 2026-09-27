@@ -5,6 +5,17 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
+# ─────────────────────────────────────────────────────────────────────────
+# 커밋을 연달아 여러 개 올리면 이 빌드가 동시에 여러 번 겹쳐서 실행될 수 있어요.
+# concurrency로 항상 한 번에 하나씩만 실행되게 막아서, 릴리스가 뒤섞이는 걸 막아요.
+# ─────────────────────────────────────────────────────────────────────────
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,9 +40,18 @@ jobs:
       - name: 디버그 APK 빌드
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: APK 업로드 (여기서 다운로드하세요)
+      - name: APK 업로드 (백업용, 압축파일)
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: 압축 없이 바로 받는 링크 만들기
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-debug
+          name: 최신 테스트용 APK (자동 갱신됨)
+          body: 이 링크의 app-debug.apk 파일을 누르면 압축 풀 필요 없이 바로 설치할 수 있어요.
+          files: app/build/outputs/apk/debug/app-debug.apk
+          prerelease: true
