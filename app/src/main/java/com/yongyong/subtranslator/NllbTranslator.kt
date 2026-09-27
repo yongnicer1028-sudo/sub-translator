@@ -279,19 +279,23 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
 
     /**
-     * 모델을 불러올 때 쓰는 옵션이에요. 기본값 그대로 두면 그래프 최적화 작업과 여러
-     * 스레드용 계산 버퍼 때문에 "불러오는 바로 그 순간"에 메모리를 더 많이 써요 —
-     * 이 앱은 음성인식(Vosk) 모델도 같이 메모리에 떠 있어서 더더욱 아껴야 해요.
+     * 모델을 불러올 때 쓰는 옵션이에요.
      *
      * ⚠ 스레드를 1개로 두면(옛날 설정) 태블릿에서 영상 재생 + 음성인식 + 번역이 동시에
      * 돌아갈 때 번역 하나에 너무 오래 걸리고(체감상 매우 느림), 그동안 기기 전체가
      * 버벅여서 다른 화면 터치도 잘 안 먹는 것처럼 느껴질 수 있어요. M2M100-418M은
      * NLLB-200보다 가벼워서 메모리 여유가 좀 더 있으니, 스레드를 2개로 늘려서 번역
      * 속도를 좀 더 확보했어요 (그 대신 메모리를 아주 조금 더 써요).
+     *
+     * ⚠ 최적화 단계(OptLevel)를 BASIC → ALL로 올렸어요. 이건 모델의 입력/출력이나
+     * 번역 결과는 전혀 안 바꾸고, ONNX Runtime이 내부적으로 계산 그래프를 더
+     * 효율적인 형태로 미리 정리해두는 것뿐이라(예: 여러 연산을 하나로 합치기)
+     * 안전하면서도 실제로 속도에 도움이 돼요. 다만 모델을 불러오는 바로 그 순간에
+     * 이 정리 작업을 하느라 메모리를 잠깐 더 쓰는데, M2M100은 가벼워서 여유가 있어요.
      */
     private fun lightweightSessionOptions(): OrtSession.SessionOptions =
         OrtSession.SessionOptions().apply {
-            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
             setIntraOpNumThreads(2)
         }
 
@@ -309,8 +313,14 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
         }
     }
 
+    // 언어 코드("__ja__" 등)의 숫자 id는 한 번 구하면 절대 안 바뀌는 값이라(같은 모델을
+    // 계속 쓰는 동안엔 고정), 문장 하나 번역할 때마다 매번 다시 찾지 않고 한 번만
+    // 계산해서 캐시해둬요. (아주 작은 절약이지만, 그만큼 매 문장마다 불필요한 작업이
+    // 줄어서 속도에 조금이라도 도움이 돼요)
+    private val langTokenCache = mutableMapOf<String, Long>()
+
     /** 문자열로 된 언어 코드(예: "__ja__")의 실제 내부 숫자 id를 tokenizer.json에서 읽어와요. */
-    private fun langTokenId(langCode: String): Long {
+    private fun langTokenId(langCode: String): Long = langTokenCache.getOrPut(langCode) {
         val encoding = tokenizer.encode(langCode, false, false)
         val ids = encoding.ids
         if (ids.size != 1) {
@@ -318,7 +328,7 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
                 "언어 코드 '$langCode' 를 토큰 1개로 인식하지 못했어요 (결과: ${ids.toList()})."
             )
         }
-        return ids[0]
+        ids[0]
     }
 
     /** 최근에 나온 (NO_REPEAT_NGRAM_SIZE - 1)개 토큰 패턴이 예전에도 나온 적 있다면,
@@ -360,6 +370,11 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
                             )
                         } as OnnxTensor
 
+                    // 디코더가 이 입력을 받는지는 모델 파일 하나에 대해 항상 똑같아서(문장마다,
+                    // 토큰마다 안 바뀜), 토큰을 만들 때마다(최대 48번) 매번 다시 확인하지 않고
+                    // 반복문 밖에서 딱 한 번만 확인해요.
+                    val decoderWantsEncoderMask = decoderSession.inputNames.contains("encoder_attention_mask")
+
                     val generated = mutableListOf(DECODER_START_TOKEN_ID, tgtId)
                     var steps = 0
                     while (steps < MAX_NEW_TOKENS) {
@@ -370,7 +385,7 @@ class NllbTranslator(paths: ModelPaths) : AutoCloseable {
                                 "input_ids" to decInputTensor,
                                 "encoder_hidden_states" to encoderHidden
                             )
-                            if (decoderSession.inputNames.contains("encoder_attention_mask")) {
+                            if (decoderWantsEncoderMask) {
                                 decoderInputsMap["encoder_attention_mask"] = maskTensor
                             }
                             decoderSession.run(decoderInputsMap).use { decoderResult ->

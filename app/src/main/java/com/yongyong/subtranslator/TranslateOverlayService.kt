@@ -71,6 +71,14 @@ import kotlinx.coroutines.withContext
  * [활성/비활성] 버튼을 눌러야 바뀌고, [닫기]를 눌러야 완전히 꺼져요(길게 누르기로
  * 끄던 방식은 없앴어요). 그리고 번역 품질 문제를 조사하려고 당분간 음성인식 원문도
  * 번역과 같이 보여줘요(SHOW_SOURCE_TEXT_FOR_DEBUG 참고).
+ *
+ * ⚠ v7 변경점: 자막창에 남겨두는 최근 번역 개수를 3개 → 10개로 늘렸고, 진단용
+ * 원문/번역 표시를 "원문: …" / "번역: …" 두 줄로 더 알아보기 쉽게 바꿨어요.
+ * 번역 속도는 NllbTranslator.kt에서 ONNX Runtime 최적화 설정을 올려서 개선했어요
+ * (모델의 캐시(KV-cache) 지원 디코더로 완전히 바꾸는 더 큰 작업은, 그 모델 파일을
+ * 미리 내려받아 구조를 확인해야 안전하게 만들 수 있는데 지금 이 작업 환경에서
+ * huggingface.co 접속이 막혀 있어서 다음 기회로 미뤄뒀어요 — 태블릿이 실제로
+ * 오작동하는 걸 막기 위한 안전한 선택이에요).
  */
 class TranslateOverlayService : Service() {
 
@@ -85,7 +93,7 @@ class TranslateOverlayService : Service() {
         private const val MAX_UTTERANCE_MS = 8000L
 
         /** 자막창에 최근 번역을 몇 개까지 남겨둘지 */
-        private const val MAX_CAPTION_LINES = 3
+        private const val MAX_CAPTION_LINES = 10
 
         // ⚠ 임시 진단용: 번역 품질이 너무 안 좋다는 문제를 조사하려고, 당분간
         // "음성인식이 실제로 알아들은 원문"도 번역 위에 같이 보여줘요. 이러면
@@ -541,7 +549,8 @@ class TranslateOverlayService : Service() {
             Log.e("TranslateOverlay", "번역 실패 (문장 1개, 원문 그대로 표시)", e)
             text
         }
-        val line = if (SHOW_SOURCE_TEXT_FOR_DEBUG) "🎤 $text\n→ $translated" else translated
+        // "원문" 한 줄, 그 아래에 "번역" 한 줄 - 딱 이 순서로만 보여줘요(요청하신 형태).
+        val line = if (SHOW_SOURCE_TEXT_FOR_DEBUG) "원문: $text\n번역: $translated" else translated
         appendCaptionLine(line)
     }
 
