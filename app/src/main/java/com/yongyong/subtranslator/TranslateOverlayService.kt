@@ -65,6 +65,12 @@ import kotlinx.coroutines.withContext
  * ⚠ v5 변경점: 번역 도중 메모리가 부족해지는 경우(OutOfMemoryError)는 일반적인
  * 오류(Exception)가 아니라서 예전 코드로는 못 잡고 앱 전체가 조용히 죽어버렸어요.
  * 이제는 그 문장 하나만 번역 실패로 처리하고, 앱과 자막창은 계속 살아있게 고쳤어요.
+ *
+ * ⚠ v6 변경점: 더블탭하면 곧바로 일시정지되던 걸, 이제는 [활성/비활성]·[닫기] 버튼
+ * 2개가 뜨는 걸로 바꿨어요(창은 그대로 떠 있어요). 실제로 일시정지/재생은
+ * [활성/비활성] 버튼을 눌러야 바뀌고, [닫기]를 눌러야 완전히 꺼져요(길게 누르기로
+ * 끄던 방식은 없앴어요). 그리고 번역 품질 문제를 조사하려고 당분간 음성인식 원문도
+ * 번역과 같이 보여줘요(SHOW_SOURCE_TEXT_FOR_DEBUG 참고).
  */
 class TranslateOverlayService : Service() {
 
@@ -78,8 +84,15 @@ class TranslateOverlayService : Service() {
         /** 이만큼 말이 안 끊기고 계속되면, 기다리지 않고 지금까지 들은 걸 강제로 한 문장으로 끊어요. */
         private const val MAX_UTTERANCE_MS = 8000L
 
-        /** 자막창에 최근 번역을 몇 줄까지 남겨둘지 */
-        private const val MAX_CAPTION_LINES = 5
+        /** 자막창에 최근 번역을 몇 개까지 남겨둘지 */
+        private const val MAX_CAPTION_LINES = 3
+
+        // ⚠ 임시 진단용: 번역 품질이 너무 안 좋다는 문제를 조사하려고, 당분간
+        // "음성인식이 실제로 알아들은 원문"도 번역 위에 같이 보여줘요. 이러면
+        // 문제가 (1) 음성인식이 애초에 잘못 알아들은 건지 (2) 제대로 알아들었는데
+        // 번역만 엉뚱하게 나오는 건지 구분할 수 있어요. 원인을 찾으면 false로
+        // 바꿔서 번역 결과만 깔끔하게 보이게 되돌리면 돼요.
+        private const val SHOW_SOURCE_TEXT_FOR_DEBUG = true
 
         /** MainActivity가 화면에 "실행 중" 표시를 하기 위해 확인하는 값 */
         @Volatile
@@ -106,6 +119,10 @@ class TranslateOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
     private var captionText: TextView? = null
+
+    /** 더블탭하면 나타나는 [활성/비활성]·[닫기] 버튼 줄이에요. 평소엔 숨겨져 있어요. */
+    private var controlBar: View? = null
+    private var btnToggleActive: TextView? = null
 
     private var translator: NllbTranslator? = null
     private var speechClient: VoskSpeechClient? = null
@@ -270,6 +287,16 @@ class TranslateOverlayService : Service() {
         val captionBox = view.findViewById<View>(R.id.captionBox)
         val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
         val resizeHandleRight = view.findViewById<View>(R.id.resizeHandleRight)
+        val controlBar = view.findViewById<View>(R.id.controlBar)
+        val btnToggleActive = view.findViewById<TextView>(R.id.btnToggleActive)
+        val btnClose = view.findViewById<TextView>(R.id.btnClose)
+        this.controlBar = controlBar
+        this.btnToggleActive = btnToggleActive
+
+        // 버튼 누르면: [활성/비활성] = 일시정지 전환 (누르자마자 글자가 바뀌어서 지금 상태를 보여줘요),
+        // [닫기] = 번역 완전히 중지 (창이 사라져요)
+        btnToggleActive.setOnClickListener { togglePause() }
+        btnClose.setOnClickListener { turnOff() }
 
         val overlayType =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -302,15 +329,12 @@ class TranslateOverlayService : Service() {
         var touchX = 0f
         var touchY = 0f
 
-        // 더블탭 = 일시정지/재생 전환, 길게 누르기 = 완전히 끄기(창이 사라져요)
+        // 더블탭 = 위쪽에 [활성/비활성]·[닫기] 버튼 줄을 보였다/숨겼다 해요.
+        // (일시정지 자체는 더블탭이 아니라 [활성/비활성] 버튼을 눌러야 바뀌어요)
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                togglePause()
+                toggleControlBarVisibility()
                 return true
-            }
-
-            override fun onLongPress(e: MotionEvent) {
-                turnOff()
             }
         })
 
@@ -395,14 +419,32 @@ class TranslateOverlayService : Service() {
         }
     }
 
-    /** 자막창을 더블탭했을 때: 일시정지 중이면 다시 재생, 재생 중이면 일시정지해요. */
+    /** 더블탭했을 때: [활성/비활성]·[닫기] 버튼 줄을 보였다/숨겼다 해요. (창 자체는 그대로 떠 있어요) */
+    private fun toggleControlBarVisibility() {
+        val bar = controlBar ?: return
+        val showing = bar.visibility == View.VISIBLE
+        if (showing) {
+            bar.visibility = View.GONE
+        } else {
+            updateToggleButtonLabel()
+            bar.visibility = View.VISIBLE
+        }
+    }
+
+    /** [활성/비활성] 버튼을 눌렀을 때: 일시정지 중이면 다시 재생, 재생 중이면 일시정지해요. */
     private fun togglePause() {
         paused = !paused
+        updateToggleButtonLabel()
         // 일시정지 중엔 자막창을 살짝 흐리게 해서 지금 멈춰있다는 걸 알 수 있게 해요.
         overlayView?.let { v -> v.post { v.alpha = if (paused) 0.5f else 1f } }
     }
 
-    /** 자막창을 길게 눌렀을 때: 서비스를 완전히 끄고 자막창도 화면에서 사라지게 해요. */
+    /** [활성/비활성] 버튼 글자를 지금 상태(재생 중=활성 / 일시정지=비활성)에 맞게 바꿔요. */
+    private fun updateToggleButtonLabel() {
+        btnToggleActive?.text = if (paused) "비활성" else "활성"
+    }
+
+    /** [닫기] 버튼을 눌렀을 때: 서비스를 완전히 끄고 자막창도 화면에서 사라지게 해요. */
     private fun turnOff() {
         stopSelf()
     }
@@ -499,7 +541,8 @@ class TranslateOverlayService : Service() {
             Log.e("TranslateOverlay", "번역 실패 (문장 1개, 원문 그대로 표시)", e)
             text
         }
-        appendCaptionLine(translated)
+        val line = if (SHOW_SOURCE_TEXT_FOR_DEBUG) "🎤 $text\n→ $translated" else translated
+        appendCaptionLine(line)
     }
 
     /** 번역된 문장을 자막창 맨 아래에 추가하고, 화면엔 최근 [MAX_CAPTION_LINES]줄까지만 남겨요. */
@@ -509,7 +552,7 @@ class TranslateOverlayService : Service() {
         while (captionLines.size > MAX_CAPTION_LINES) {
             captionLines.removeFirst()
         }
-        updateCaption(captionLines.joinToString("\n"))
+        updateCaption(captionLines.joinToString("\n\n"))
     }
 
     private suspend fun updateCaption(text: String) {
