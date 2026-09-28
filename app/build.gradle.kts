@@ -11,8 +11,8 @@ android {
         applicationId = "com.yongyong.subtranslator"
         minSdk = 29
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.9-word-confidence-filter"
+        versionCode = 10
+        versionName = "0.10-caption-scroll"
     }
 
     // ⚠ 이 서명 설정이 없으면, 깃허브에서 새로 빌드할 때마다 매번 다른 임시 서명이 생겨서
