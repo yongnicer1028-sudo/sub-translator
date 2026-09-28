@@ -27,20 +27,23 @@ import java.util.zip.ZipInputStream
  * "여기서 문장이 끝났다"고 판단하는 순간에만 문장을 완성해서 돌려주는 방식으로 바꿨어요.
  * (이게 Vosk가 원래 쓰이도록 설계된 정석적인 방법이에요)
  *
- * ⚠ v3 변경점: 설정 화면에서 "정확도 우선 모드"를 켤 수 있게 됐어요. 기본은 지금까지
- * 쓰던 작은 모델 그대로고, 켜면 훨씬 정확하지만 용량이 큰(약 1~2GB) 모델을 대신
- * 받아서 써요. 용량이 큰 만큼 이 기기 메모리가 부족하면 실행 중 꺼질 수 있어서
- * 기본값은 꺼짐으로 두고, 필요한 사람만 선택하게 했어요. 또한 모델을 불러오다가
- * 메모리가 부족해지는 경우(OutOfMemoryError)도 이제 앱을 죽이지 않고 안전하게
- * 실패 메시지만 보여주도록 고쳤어요(load() 참고).
+ * ⚠ v3 변경점: 설정 화면에서 "정확도 우선 모드"를 켤 수 있게 했었어요(작은 모델
+ * 대신 용량이 큰(약 1~2GB) 모델을 선택하는 기능). 하지만 그 모델이 태블릿에서
+ * 영상 재생과 같이 돌아가면 메모리가 부족해져서 앱이 꺼지는 문제가 있었고,
+ * 결국 실제로는 못 쓰는 기능이라 v5에서 완전히 없앴어요 (아래 v5 참고).
  *
- * ⚠ v4 변경점: 정확도 우선(큰) 모델은 태블릿에서 영상 재생과 같이 돌리면 메모리가
- * 부족해져서 꺼지는 문제가 있어서, 모델 크기는 그대로(작은 모델) 두고 번역 품질을
- * 높이는 방법을 대신 넣었어요 — Vosk가 단어 하나하나마다 "이 단어가 맞을 확률
- * (신뢰도)"도 같이 알려주게 설정하고(setWords), 신뢰도가 너무 낮은 단어는 아마
- * 잘못 들었을 가능성이 커서 번역기에 넘기기 전에 걸러내요(extractText 참고).
- * 잘못 들은 단어를 그대로 번역기에 넘기면 번역도 같이 엉뚱해지니, 여기서 먼저
- * 걸러주면 모델은 안 바꿔도 번역 결과가 더 깨끗해져요.
+ * ⚠ v4 변경점: 모델 크기는 그대로(작은 모델) 두고 번역 품질을 높이는 방법을
+ * 대신 넣었어요 — Vosk가 단어 하나하나마다 "이 단어가 맞을 확률(신뢰도)"도 같이
+ * 알려주게 설정하고(setWords), 신뢰도가 너무 낮은 단어는 아마 잘못 들었을
+ * 가능성이 커서 번역기에 넘기기 전에 걸러내요(extractText 참고). 잘못 들은
+ * 단어를 그대로 번역기에 넘기면 번역도 같이 엉뚱해지니, 여기서 먼저 걸러주면
+ * 모델은 안 바꿔도 번역 결과가 더 깨끗해져요.
+ *
+ * ⚠ v5 변경점: v3에서 만든 "정확도 우선 모드"(큰 모델 선택 기능)를 완전히
+ * 없앴어요 - 메모리 문제로 어차피 안정적으로 못 쓰는 기능을 옵션으로 남겨두는
+ * 것보다, 깔끔하게 지우고 작은 모델 하나만 쓰는 게 더 낫다고 판단했어요.
+ * load()가 다시 (context, language, onProgress) 3개만 받고, modelInfo()도
+ * 작은 모델 주소만 돌려줘요.
  */
 
 /** 이 값보다 신뢰도(conf)가 낮은 단어는 걸러내요. 너무 높게 잡으면 멀쩡한 단어까지
@@ -129,35 +132,14 @@ class VoskSpeechClient private constructor(private val model: Model) {
     }
 
     companion object {
-        // highAccuracy가 false(기본값)일 땐 예전 그대로 작은 모델(40~50MB)을 써요 - 태그
-        // 이름도 그대로 유지해서, 이미 받아둔 사람은 다시 받을 필요가 없어요.
-        //
-        // highAccuracy가 true일 땐 훨씬 정확하지만 용량이 큰(약 1~2GB) 모델을 대신
-        // 받아요. 폴더 이름(태그)을 아예 다르게 줘서 작은 모델과 따로 저장되게 했어요 -
-        // 그래야 설정에서 껐다 켰다 해도 매번 다시 받지 않아요.
-        //
-        // ⚠ 이 큰 모델들의 정확한 파일 이름은 지금 이 작업 환경에서 vosk 공식 사이트
-        // 접속이 막혀 있어서 직접 확인은 못 했고, 기억을 바탕으로 적어둔 값이에요.
-        // 혹시 특정 언어에서 "다운로드 실패" 메시지가 뜨면(파일 이름이 바뀌었을 수
-        // 있어요), 그 언어를 알려주시면 정확한 주소를 다시 찾아서 고쳐드릴게요 -
-        // 실패해도 앱이 꺼지지 않고 이 메시지만 뜨니 안심하세요.
-        private fun modelInfo(language: String, highAccuracy: Boolean): Pair<String, String> {
-            if (highAccuracy) {
-                return when (language) {
-                    Prefs.LANG_JAPANESE -> "ja-large" to "https://alphacephei.com/vosk/models/vosk-model-ja-0.22.zip"
-                    Prefs.LANG_ENGLISH -> "en-large" to "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"
-                    Prefs.LANG_RUSSIAN -> "ru-large" to "https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip"
-                    Prefs.LANG_GERMAN -> "de-large" to "https://alphacephei.com/vosk/models/vosk-model-de-0.21.zip"
-                    else -> "cn-large" to "https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip"
-                }
-            }
-            return when (language) {
-                Prefs.LANG_JAPANESE -> "ja" to "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
-                Prefs.LANG_ENGLISH -> "en" to "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
-                Prefs.LANG_RUSSIAN -> "ru" to "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
-                Prefs.LANG_GERMAN -> "de" to "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"
-                else -> "cn" to "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
-            }
+        // 작은 모델(40~50MB)만 써요. 태그 이름은 예전 그대로 유지해서, 이미 받아둔
+        // 사람은 다시 받을 필요가 없어요.
+        private fun modelInfo(language: String): Pair<String, String> = when (language) {
+            Prefs.LANG_JAPANESE -> "ja" to "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
+            Prefs.LANG_ENGLISH -> "en" to "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+            Prefs.LANG_RUSSIAN -> "ru" to "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
+            Prefs.LANG_GERMAN -> "de" to "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"
+            else -> "cn" to "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
         }
 
         /**
@@ -172,25 +154,17 @@ class VoskSpeechClient private constructor(private val model: Model) {
         fun load(
             context: Context,
             language: String,
-            highAccuracy: Boolean,
             onProgress: (String) -> Unit
         ): VoskSpeechClient? {
             return try {
-                val (tag, url) = modelInfo(language, highAccuracy)
+                val (tag, url) = modelInfo(language)
                 val modelDir = File(context.filesDir, "vosk-model-$tag")
 
                 var modelRoot = findModelRoot(modelDir)
                 if (modelRoot == null) {
-                    val sizeHint = if (highAccuracy) {
-                        "정확도 우선 모델이라 용량이 커요, 약 1~2GB, 와이파이 꼭 확인해주세요"
-                    } else {
-                        "이 언어는 처음이라 한 번만 받으면 돼요, 40~50MB 정도"
-                    }
-                    onProgress("음성인식 모델을 내려받는 중이에요… ($sizeHint)")
-                    // 용량이 큰(정확도 우선) 모델은 받는 데 시간이 꽤 걸릴 수 있어서,
-                    // 화면이 멈춘 것처럼 보이지 않게 진행률(%)도 같이 보여줘요.
+                    onProgress("음성인식 모델을 내려받는 중이에요… (이 언어는 처음이라 한 번만 받으면 돼요, 40~50MB 정도)")
                     downloadAndUnzip(url, modelDir) { percent ->
-                        onProgress("음성인식 모델을 내려받는 중… ($percent%, $sizeHint)")
+                        onProgress("음성인식 모델을 내려받는 중… ($percent%)")
                     }
                     modelRoot = findModelRoot(modelDir)
                 }
@@ -198,10 +172,9 @@ class VoskSpeechClient private constructor(private val model: Model) {
 
                 VoskSpeechClient(Model(modelRoot.absolutePath))
             } catch (e: Throwable) {
-                // 예전엔 Exception만 잡았는데, 메모리가 부족할 때 나는 OutOfMemoryError는
+                // Exception만 잡으면, 메모리가 부족할 때 나는 OutOfMemoryError는
                 // Exception이 아니라 Error라서 여기서 못 잡히고 서비스 전체가 조용히
-                // 죽어버릴 수 있었어요. 정확도 우선(용량 큰) 모델을 추가하면서 이 위험이
-                // 커져서, Throwable로 넓혀 항상 안전하게 null을 돌려주게 했어요.
+                // 죽어버릴 수 있어요. Throwable로 넓혀서 항상 안전하게 null을 돌려주게 했어요.
                 null
             }
         }

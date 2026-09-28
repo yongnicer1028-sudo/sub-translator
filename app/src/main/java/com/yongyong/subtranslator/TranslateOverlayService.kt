@@ -24,6 +24,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -88,9 +89,20 @@ import kotlinx.coroutines.withContext
  * ⚠ v9 변경점: 진단용으로 원문(음성인식 결과)을 같이 보여준 결과, 번역이 이상했던
  * 진짜 원인이 번역기가 아니라 음성인식(Vosk) 자체가 알아듣는 단계였다는 게
  * 확인됐어요. 그래서 설정 화면에 "정확도 우선 모드"를 추가해서, 원하는 사람은
- * 용량이 큰(약 1~2GB) 더 정확한 모델을 선택할 수 있게 했어요(VoskSpeechClient.kt
- * 참고). 이 모드는 이 기기 메모리 여유에 따라 다시 꺼짐 문제가 생길 수 있어서
- * 기본값은 꺼짐이에요.
+ * 용량이 큰(약 1~2GB) 더 정확한 모델을 선택할 수 있게 했었어요. 하지만 이 모드는
+ * 실제로 영상 재생과 같이 돌리면 메모리 부족으로 꺼지는 경우가 많아 결국 못 쓰는
+ * 기능이었고, v10에서 완전히 없앴어요(아래 v10 참고).
+ *
+ * ⚠ v10 변경점: (1) "정확도 우선 모드"를 없애고, 대신 VoskSpeechClient.kt에서
+ * 단어별 신뢰도를 확인해서 신뢰도가 낮은(아마 잘못 들었을) 단어를 걸러내는
+ * 방식으로 번역 품질을 개선했어요 - 모델 용량은 그대로 작게 유지돼요. (2) 자막이
+ * 계속 쌓이면 자막창이 위로 한없이 늘어나 보이던 문제를 고쳤어요 - 이제 자막이
+ * 보이는 부분(captionScroll)은 높이가 정해져 있고, 그 안에서 최근 자막이 자동으로
+ * 아래로 스크롤되면서 손가락으로 위/아래를 오가며 지난 자막도 볼 수 있어요. (3)
+ * 자막창 아래쪽 가장자리(resizeHandleBottom)를 위아래로 끌면 한 번에 보이는
+ * 자막 높이를 조절할 수 있어요(좌우 너비 조절은 기존 그대로예요). 최근 자막을
+ * 몇 개까지 기억해둘지(MAX_CAPTION_LINES)도 10 → 30으로 늘려서, 스크롤로 더
+ * 많은 과거 자막을 볼 수 있게 했어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -108,8 +120,8 @@ class TranslateOverlayService : Service() {
         // 더 빨리, 더 자주 뜨는 대신, 문장이 끊기는 지점이 조금 더 어색할 수 있어요.
         private const val MAX_UTTERANCE_MS = 5000L
 
-        /** 자막창에 최근 번역을 몇 개까지 남겨둘지 */
-        private const val MAX_CAPTION_LINES = 10
+        /** 자막창에 최근 번역을 몇 개까지 남겨둘지 (화면엔 스크롤로 지난 자막도 볼 수 있어요) */
+        private const val MAX_CAPTION_LINES = 30
 
         // ⚠ 임시 진단용: 번역 품질이 너무 안 좋다는 문제를 조사하려고, 당분간
         // "음성인식이 실제로 알아들은 원문"도 번역 위에 같이 보여줘요. 이러면
@@ -143,6 +155,7 @@ class TranslateOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
     private var captionText: TextView? = null
+    private var captionScroll: ScrollView? = null
 
     /** 더블탭하면 나타나는 [활성/비활성]·[닫기] 버튼 줄이에요. 평소엔 숨겨져 있어요. */
     private var controlBar: View? = null
@@ -232,17 +245,11 @@ class TranslateOverlayService : Service() {
                 return@launch
             }
 
-            val highAccuracyAsr = Prefs.getAsrHighAccuracy(applicationContext)
-            val client = VoskSpeechClient.load(applicationContext, language, highAccuracyAsr) { message ->
+            val client = VoskSpeechClient.load(applicationContext, language) { message ->
                 updateCaptionSync(message)
             }
             if (client == null) {
-                val extraHint = if (highAccuracyAsr) {
-                    " (정확도 우선 모델이 이 기기에 버거울 수 있어요 - 설정 화면에서 다시 꺼보세요)"
-                } else {
-                    ""
-                }
-                updateCaption("음성인식 모델을 준비하지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요.$extraHint")
+                updateCaption("음성인식 모델을 준비하지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요.")
                 return@launch
             }
             speechClient = client
@@ -314,9 +321,12 @@ class TranslateOverlayService : Service() {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.overlay_caption, null)
         captionText = view.findViewById(R.id.textCaption)
+        val captionScroll = view.findViewById<ScrollView>(R.id.captionScroll)
+        this.captionScroll = captionScroll
         val captionBox = view.findViewById<View>(R.id.captionBox)
         val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
         val resizeHandleRight = view.findViewById<View>(R.id.resizeHandleRight)
+        val resizeHandleBottom = view.findViewById<View>(R.id.resizeHandleBottom)
         val controlBar = view.findViewById<View>(R.id.controlBar)
         val btnToggleActive = view.findViewById<TextView>(R.id.btnToggleActive)
         val btnClose = view.findViewById<TextView>(R.id.btnClose)
@@ -339,6 +349,13 @@ class TranslateOverlayService : Service() {
         val defaultWidthPx = (260 * density).toInt()
         val minWidthPx = (140 * density).toInt()
         val maxWidthPx = resources.displayMetrics.widthPixels - (40 * density).toInt()
+
+        // 자막이 한 번에 보이는 높이(세로 크기)의 기본값/최소값/최대값. 이 높이보다
+        // 자막 내용이 길어지면 화면을 계속 키우는 대신 captionScroll 안에서 스크롤돼요.
+        val defaultScrollHeightPx = (220 * density).toInt()
+        val minScrollHeightPx = (80 * density).toInt()
+        val maxScrollHeightPx = resources.displayMetrics.heightPixels - (200 * density).toInt()
+        captionScroll.layoutParams = captionScroll.layoutParams.apply { height = defaultScrollHeightPx }
 
         val params = WindowManager.LayoutParams(
             defaultWidthPx,
@@ -431,6 +448,33 @@ class TranslateOverlayService : Service() {
                     val actualDelta = resizeStartWidth - newWidth
                     params.width = newWidth
                     params.x = initialX + actualDelta
+                    try {
+                        windowManager.updateViewLayout(view, params)
+                    } catch (_: Exception) {
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 아래쪽 가장자리를 위아래로 끌면 captionScroll의 높이(한 번에 보이는 자막 양)가
+        // 바뀌어요. window 자체 높이는 WRAP_CONTENT라서, captionScroll 높이만 바꾸고
+        // updateViewLayout으로 한 번 더 알려주면 창 전체 크기도 자동으로 맞춰져요.
+        var resizeStartHeight = 0
+        var resizeStartY = 0f
+
+        resizeHandleBottom.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeStartHeight = captionScroll.layoutParams.height
+                    resizeStartY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val newHeight = (resizeStartHeight + (event.rawY - resizeStartY).toInt())
+                        .coerceIn(minScrollHeightPx, maxScrollHeightPx)
+                    captionScroll.layoutParams = captionScroll.layoutParams.apply { height = newHeight }
                     try {
                         windowManager.updateViewLayout(view, params)
                     } catch (_: Exception) {
@@ -589,12 +633,22 @@ class TranslateOverlayService : Service() {
     private suspend fun updateCaption(text: String) {
         withContext(Dispatchers.Main) {
             captionText?.text = text
+            scrollCaptionToBottom()
         }
     }
 
     /** onStartCommand처럼 suspend가 아닌 곳에서 자막을 바로 바꾸고 싶을 때 */
     private fun updateCaptionSync(text: String) {
-        captionText?.post { captionText?.text = text }
+        captionText?.post {
+            captionText?.text = text
+            scrollCaptionToBottom()
+        }
+    }
+
+    /** 자막을 바꾼 직후, 스크롤 영역을 맨 아래(가장 최근 자막)로 옮겨줘요. 사람이 손가락으로
+     *  위로 올려서 지난 자막을 보고 있다가도, 새 자막이 뜨면 다시 최신 내용으로 따라가요. */
+    private fun scrollCaptionToBottom() {
+        captionScroll?.post { captionScroll?.fullScroll(View.FOCUS_DOWN) }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

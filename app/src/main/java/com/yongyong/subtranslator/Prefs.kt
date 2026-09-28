@@ -9,7 +9,6 @@ import android.content.Context
 object Prefs {
     private const val PREFS_NAME = "sub_translator_prefs"
     private const val KEY_LANGUAGE = "source_language"
-    private const val KEY_ASR_HIGH_ACCURACY = "asr_high_accuracy"
 
     const val LANG_CHINESE = "zh"
     const val LANG_JAPANESE = "ja"
@@ -24,16 +23,11 @@ object Prefs {
         prefs(context).edit().putString(KEY_LANGUAGE, value).apply()
     }
 
-    // 음성인식(Vosk) 정확도 우선 모드 - 기본은 꺼짐(작은 모델, 안전 우선). 켜면 훨씬
-    // 정확하지만 용량이 큰(약 1~2GB) 모델을 대신 받아서 써요. 번역 모델이랑 같이
-    // 메모리에 올라가면 기기에 따라 실행 중 꺼질 수 있어서, 기본값은 꺼짐으로 두고
-    // 원하는 사람만 설정 화면에서 켜게 했어요.
-    fun getAsrHighAccuracy(context: Context): Boolean =
-        prefs(context).getBoolean(KEY_ASR_HIGH_ACCURACY, false)
-
-    fun setAsrHighAccuracy(context: Context, value: Boolean) {
-        prefs(context).edit().putBoolean(KEY_ASR_HIGH_ACCURACY, value).apply()
-    }
+    // ⚠ v2: 음성인식 "정확도 우선 모드"(용량 큰 1~2GB 모델을 선택할 수 있게 하던 설정)를
+    // 여기 있던 getAsrHighAccuracy/setAsrHighAccuracy와 함께 완전히 없앴어요. 번역
+    // 모델이랑 같이 메모리에 떠 있으면 기기에 따라 실행 중 꺼지는 문제가 있었는데,
+    // 껐다 켰다 하는 옵션으로 두는 것보다 아예 없애는 게 더 안전해서예요. 번역 품질은
+    // 대신 VoskSpeechClient.kt의 단어 신뢰도 필터링으로 개선하고 있어요.
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
