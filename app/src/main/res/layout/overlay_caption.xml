@@ -2,7 +2,17 @@
 <!--
     자막창 레이아웃.
     - controlBar: 평소엔 숨겨져 있다가(gone), dragHandle을 더블탭하면 나타나는 작은 버튼
-      2개짜리 줄이에요. btnToggleActive(활성/비활성 전환) / btnClose(닫기=번역 중지).
+      4개짜리 줄이에요. btnToggleActive(활성/비활성 전환) / btnOpacity(투명도 조절
+      슬라이더 보이기·숨기기) / btnResize(크기 조절 －/＋ 버튼 보이기·숨기기) /
+      btnClose(닫기=번역 중지).
+    - opacityRow: btnOpacity를 누르면 나타나는(평소엔 gone) 슬라이더 한 줄이에요.
+      seekOpacity(SeekBar, 0~10)를 좌우로 움직이면 captionBox 배경(검은 박스)의
+      진하기만 바뀌어요 - 글자는 항상 그대로 잘 보여요(배경 Drawable의 알파값만
+      바꾸고, 글자를 담은 자식 View들은 안 건드리기 때문이에요).
+    - resizeRow: btnResize를 누르면 나타나는(평소엔 gone) －/＋ 버튼 줄이에요.
+      btnWidthMinus/btnWidthPlus = 너비 한 단계씩, btnHeightMinus/btnHeightPlus =
+      높이 한 단계씩. 손가락으로 가장자리를 정밀하게 드래그하기 어려울 때 쓰는
+      대안이에요.
     - captionBox: 실제로 번역 글자가 보이는 검은 박스.
     - dragHandle: captionBox 맨 위의 작은 손잡이 줄(가운데 흰 막대 표시). 더블탭=위
       controlBar 보이기/숨기기, 드래그=창 이동을 여기서 담당해요.
@@ -18,7 +28,8 @@
       흰색 띠) 바꿔서 손가락으로 잡기 편하게 했어요.
     - resizeHandleBottom: 박스 아래쪽 가장자리. 여기를 위아래로 끌면 captionScroll의
       높이(한 번에 보이는 자막 양)가 늘었다 줄었다 해요. 마찬가지로 24dp로 넓히고
-      보이게 바꿨어요.
+      보이게 바꿨어요. v13에서 창(window) 자체 높이도 같이 정확하게 계산해서
+      넣도록 고쳐서, 손잡이가 상자 가장자리에 항상 딱 붙어서 움직여요.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
@@ -50,6 +61,38 @@
             android:layout_height="1dp" />
 
         <TextView
+            android:id="@+id/btnOpacity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/overlay_bubble_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="투명도"
+            android:textColor="@color/overlay_text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="8dp"
+            android:layout_height="1dp" />
+
+        <TextView
+            android:id="@+id/btnResize"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/overlay_bubble_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="크기"
+            android:textColor="@color/overlay_text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="8dp"
+            android:layout_height="1dp" />
+
+        <TextView
             android:id="@+id/btnClose"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -60,6 +103,116 @@
             android:textColor="@color/overlay_text"
             android:textSize="14sp"
             android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/resizeRow"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/overlay_bubble_bg"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:text="너비"
+            android:textColor="@color/overlay_text"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/btnWidthMinus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/overlay_bubble_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:text="－"
+            android:textColor="@color/overlay_text"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnWidthPlus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/overlay_bubble_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:text="＋"
+            android:textColor="@color/overlay_text"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:text="높이"
+            android:textColor="@color/overlay_text"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/btnHeightMinus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/overlay_bubble_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:text="－"
+            android:textColor="@color/overlay_text"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnHeightPlus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/overlay_bubble_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:text="＋"
+            android:textColor="@color/overlay_text"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/opacityRow"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/overlay_bubble_bg"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/labelOpacity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:text="투명도 10"
+            android:textColor="@color/overlay_text"
+            android:textSize="12sp" />
+
+        <SeekBar
+            android:id="@+id/seekOpacity"
+            android:layout_width="150dp"
+            android:layout_height="wrap_content"
+            android:max="10" />
 
     </LinearLayout>
 
