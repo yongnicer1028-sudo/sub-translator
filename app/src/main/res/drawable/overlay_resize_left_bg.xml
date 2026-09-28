@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    좌/우/아래 크기 조절 손잡이(resizeHandleLeft/Right/Bottom)용 배경이에요.
+    ⚠ v15: 예전엔 이 손잡이들이 그냥 사각형 색상(android:background="#22FFFFFF")이었는데,
+    캡션 박스(overlay_bubble_bg, 모서리 둥글기 14dp)는 둥근 모서리인데 손잡이는 각진
+    사각형이다 보니, 박스의 둥근 모서리 부분에서 손잡이가 삐져나오거나 박스가 손잡이
+    뒤로 비쳐 보이면서 "손잡이가 박스랑 따로 떨어진 별개의 조각처럼 보인다"는 말씀을
+    주셨어요. 그래서 이 손잡이도 캡션 박스와 똑같은 14dp 둥근 모서리를 가진 모양으로
+    바꿔서, 겹치는 위치(박스의 왼쪽 모서리)에서 둘의 곡선이 정확히 겹쳐 하나로 이어져
+    보이게 했어요. 이 파일은 왼쪽 손잡이용이라 왼쪽(위/아래) 모서리만 둥글어요.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#22FFFFFF" />
+    <corners
+        android:topLeftRadius="14dp"
+        android:bottomLeftRadius="14dp"
+        android:topRightRadius="0dp"
+        android:bottomRightRadius="0dp" />
+</shape>
