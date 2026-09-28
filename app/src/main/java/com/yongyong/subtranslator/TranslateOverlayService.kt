@@ -143,6 +143,15 @@ import kotlinx.coroutines.withContext
  * 않아요. (2) dragHandle을 더블탭하면 뜨는 줄에 [크기] 버튼을 추가했어요 - 누르면
  * 너비／높이를 각각 －/＋ 버튼으로 한 단계(24dp)씩 정확하게 조절할 수 있어요.
  * 손가락으로 정밀하게 드래그하기 어려울 때 쓰라고 넣었어요.
+ *
+ * ⚠ v14 변경점: (1) 크기 조절 손잡이(좌/우/아래)가 투명도 설정과 상관없이 항상 똑같은
+ * 밝기여서, 캡션 박스를 옅게 만들면 손잡이만 따로 진하게 동동 떠 있는 것처럼 보인다는
+ * 말씀을 주셨어요 - 이제 [투명도] 슬라이더를 움직이면 손잡이들도 캡션 박스와 같은
+ * 비율로 같이 옅어지고 진해져요(applyCaptionOpacity 참고). (2) [활성/비활성] 버튼을
+ * 눌러 비활성으로 바꾸면, 예전엔 자막 상자가 그대로 남은 채 살짝 흐려지기만 했는데,
+ * 이제는 자막 상자·크기 조절 손잡이·[투명도]/[크기]/[닫기] 버튼을 전부 숨기고
+ * [비활성] 버튼 하나만 화면에 떠 있게 바꿨어요(applyPausedVisualState 참고) - 다시
+ * 누르면 원래대로 돌아와요.
  */
 class TranslateOverlayService : Service() {
 
@@ -211,6 +220,16 @@ class TranslateOverlayService : Service() {
 
     /** [크기] 버튼을 누르면 나타나는 －/＋ 버튼 줄이에요. 평소엔 숨겨져 있어요. */
     private var resizeRow: View? = null
+
+    // ⚠ v14: [활성/비활성] 버튼으로 완전히 껐을 때(paused) captionBox와 함께 숨겨야
+    // 하는 것들, 그리고 투명도 슬라이더에 맞춰 같이 옅어져야 하는 크기 조절 손잡이들을
+    // 여기 인스턴스 필드로 저장해둬요(togglePause/applyCaptionOpacity에서 씀).
+    private var resizeHandleLeft: View? = null
+    private var resizeHandleRight: View? = null
+    private var resizeHandleBottom: View? = null
+    private var btnOpacity: TextView? = null
+    private var btnResize: TextView? = null
+    private var btnClose: TextView? = null
 
     private var translator: NllbTranslator? = null
     private var speechClient: VoskSpeechClient? = null
@@ -397,6 +416,12 @@ class TranslateOverlayService : Service() {
         this.btnToggleActive = btnToggleActive
         this.opacityRow = opacityRow
         this.resizeRow = resizeRow
+        this.resizeHandleLeft = resizeHandleLeft
+        this.resizeHandleRight = resizeHandleRight
+        this.resizeHandleBottom = resizeHandleBottom
+        this.btnOpacity = btnOpacity
+        this.btnResize = btnResize
+        this.btnClose = btnClose
 
         // 버튼 누르면: [활성/비활성] = 일시정지 전환 (누르자마자 글자가 바뀌어서 지금 상태를 보여줘요),
         // [투명도] = 아래 슬라이더 줄 보이기/숨기기, [크기] = 아래 －/＋ 버튼 줄 보이기/숨기기,
@@ -661,31 +686,67 @@ class TranslateOverlayService : Service() {
         recomputeWindowHeight()
     }
 
-    /** captionBox의 배경(검은 둥근 박스)만 진하기를 바꿔요. 0(완전 투명)~10(원래처럼 진한
-     *  검정) 사이 값을 받아서 실제 알파값(0~255)으로 바꿔 적용해요.
+    /** captionBox의 배경(검은 둥근 박스)과 좌/우/아래 크기 조절 손잡이의 진하기를 같이
+     *  바꿔요. 0(완전 투명)~10(원래처럼 진한 검정) 사이 값을 받아서 실제 알파값으로
+     *  바꿔 적용해요.
      *
      *  ⚠ btnToggleActive/btnOpacity/btnClose도 같은 @drawable/overlay_bubble_bg를 배경으로
      *  써요. Drawable 리소스는 여러 View가 기본적으로 같은 인스턴스를 공유할 수 있어서,
      *  mutate() 없이 바로 alpha를 바꾸면 그 버튼들 배경까지 같이 옅어질 수 있어요.
      *  mutate()로 captionBox만의 독립적인 Drawable 사본을 만든 다음 바꿔서, 다른 곳엔
-     *  영향이 안 가게 했어요. */
+     *  영향이 안 가게 했어요.
+     *
+     *  ⚠ v14: 크기 조절 손잡이(resizeHandleLeft/Right/Bottom)는 지금까지 투명도 설정과
+     *  상관없이 항상 똑같은 밝기(#22FFFFFF)였어요 - 그래서 캡션 박스는 옅어지는데 손잡이만
+     *  그대로 진하게 남아있으면, 손잡이가 상자에서 따로 동동 떠 있는 것처럼 보인다는
+     *  말씀을 주셨어요. 이제 손잡이들도 View 자체의 alpha(0~1)를 캡션 박스와 같은
+     *  비율로 같이 바꿔서, 옅어질 땐 손잡이도 같이 옅어지고 진해질 땐 같이 진해져요. */
     private fun applyCaptionOpacity(level: Int) {
         val clamped = level.coerceIn(0, 10)
         val alpha = (clamped * 255 / 10).coerceIn(0, 255)
         (captionBox?.background?.mutate() as? GradientDrawable)?.alpha = alpha
+
+        val handleAlphaFraction = clamped / 10f
+        resizeHandleLeft?.alpha = handleAlphaFraction
+        resizeHandleRight?.alpha = handleAlphaFraction
+        resizeHandleBottom?.alpha = handleAlphaFraction
     }
 
-    /** [활성/비활성] 버튼을 눌렀을 때: 일시정지 중이면 다시 재생, 재생 중이면 일시정지해요. */
+    /** [활성/비활성] 버튼을 눌렀을 때: 일시정지 중이면 다시 재생, 재생 중이면 일시정지해요.
+     *
+     *  ⚠ v14: 예전엔 비활성으로 바꿔도 자막 상자가 그대로 화면에 남아있고 살짝 흐려지기만
+     *  했는데, "비활성 버튼은 아예 창을 닫아주고 비활성 버튼만 떠다니게 해달라"는 말씀을
+     *  주셔서, 이제 비활성 상태에선 자막 상자·크기 조절 손잡이·[투명도]/[크기]/[닫기]
+     *  버튼을 전부 숨기고 [비활성] 버튼 하나만 화면에 떠 있게 바꿨어요(applyPausedVisualState
+     *  참고). 다시 누르면 원래대로 자막 상자가 돌아와요. */
     private fun togglePause() {
         paused = !paused
         updateToggleButtonLabel()
-        // 일시정지 중엔 자막창을 살짝 흐리게 해서 지금 멈춰있다는 걸 알 수 있게 해요.
-        overlayView?.let { v -> v.post { v.alpha = if (paused) 0.5f else 1f } }
+        applyPausedVisualState()
     }
 
     /** [활성/비활성] 버튼 글자를 지금 상태(재생 중=활성 / 일시정지=비활성)에 맞게 바꿔요. */
     private fun updateToggleButtonLabel() {
         btnToggleActive?.text = if (paused) "비활성" else "활성"
+    }
+
+    /** 비활성 상태로 바뀌면: 자막 상자, 크기 조절 손잡이, [투명도]/[크기]/[닫기] 버튼을
+     *  전부 숨기고 [비활성] 버튼 하나만 화면에 남겨요(창 크기도 그만큼 줄어들어요).
+     *  다시 활성으로 바뀌면 전부 원래대로 돌아오고, 버튼 줄(controlBar)은 원래
+     *  기본값대로 다시 숨겨져요(더블탭하면 다시 열려요). */
+    private fun applyPausedVisualState() {
+        val nowPaused = paused
+        captionBox?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        resizeHandleLeft?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        resizeHandleRight?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        resizeHandleBottom?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        btnOpacity?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        btnResize?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        btnClose?.visibility = if (nowPaused) View.GONE else View.VISIBLE
+        opacityRow?.visibility = View.GONE
+        resizeRow?.visibility = View.GONE
+        controlBar?.visibility = if (nowPaused) View.VISIBLE else View.GONE
+        recomputeWindowHeight()
     }
 
     /** [닫기] 버튼을 눌렀을 때: 서비스를 완전히 끄고 자막창도 화면에서 사라지게 해요. */
