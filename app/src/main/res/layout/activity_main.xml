@@ -41,21 +41,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp" />
 
-        <CheckBox
-            android:id="@+id/checkboxHighAccuracyAsr"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="음성인식 정확도 우선 모드" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="켜면 음성인식이 더 정확해지지만, 모델 용량이 훨씬 커요(약 1~2GB, 최초 1회만 다운로드, 와이파이 권장). 이 기기 메모리가 부족하면 번역 중 앱이 꺼질 수 있어요 - 그럴 땐 다시 꺼서 기본 모델로 돌아가세요."
-            android:textSize="12sp"
-            android:textColor="#8A939C" />
-
         <Button
             android:id="@+id/btnSaveSettings"
             android:layout_width="match_parent"
