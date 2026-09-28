@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
@@ -25,6 +26,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -117,6 +119,30 @@ import kotlinx.coroutines.withContext
  * 내놓다 보니, 번역기(M2M100)가 그 스페이스를 실제 띄어쓰기로 착각해서 단어를
  * 이상하게 잘라 읽는 문제가 있었어요(VoskSpeechClient.kt 참고) - 이 두 언어만
  * 띄어쓰기 없이 붙여서 번역기에 넘기도록 고쳤어요.
+ *
+ * ⚠ v12 변경점: (1) 자막창 배경(검은 박스)의 진하기를 직접 조절할 수 있게 했어요 -
+ * dragHandle을 더블탭하면 뜨는 줄에 [투명도] 버튼을 추가했고, 누르면 슬라이더가
+ * 나와서 0(완전 투명)~10(지금까지와 같은 진한 검정) 사이로 좌우로 끌어서 조절해요.
+ * 글자 자체는 항상 선명하게 보이고, 배경만 옅어져요(captionBox의 배경
+ * Drawable에만 알파값을 적용하고, 안의 글자 View는 안 건드리는 방식이에요).
+ * 고른 값은 저장해뒀다가 다음에 켤 때도 그대로 적용돼요. (2) 번역 결과가 완전히
+ * 빈 문자열로 나오는 경우("요", "응" 같은 아주 짧은 추임새 한두 글자만 인식됐을
+ * 때 종종 있었어요)를 처리했어요 - 원문이 아주 짧으면 자막에 아예 안 띄우고
+ * 넘어가고, 그보다 길면 "번역: " 뒤가 텅 비어 보이지 않도록 원문이라도 대신
+ * 보여줘요.
+ *
+ * ⚠ v13 변경점: (1) 위/아래 크기 조절(resizeHandleBottom)이 좌/우 조절과 다르게
+ * 동작하던 버그를 고쳤어요 - 예전엔 창(window) 자체는 WRAP_CONTENT로 두고
+ * captionScroll의 높이만 바꾼 다음 "알아서 맞춰지길" 기다렸는데, 이러면 손잡이가
+ * 실제 상자 가장자리랑 따로 노는 것처럼 보였어요("손잡이를 잡고 내리면 위에서
+ * 늘어나는 것 같다"는 문제). recomputeWindowHeight()에서 지금 화면에 실제로 보이는
+ * 내용을 직접 재서(view.measure) 창 높이(params.height)에 넣는 방식으로 바꿔서,
+ * 이제 손잡이가 상자 가장자리에 항상 딱 붙어서 같이 움직여요. 고정된 숫자로만
+ * 계산하지 않고 매번 실측하기 때문에, 아래 [크기] 버튼이나 더블탭으로 위쪽 버튼
+ * 줄(controlBar/투명도/크기 조절 줄)을 펼쳤을 때도 그만큼 창이 같이 커져서 잘리지
+ * 않아요. (2) dragHandle을 더블탭하면 뜨는 줄에 [크기] 버튼을 추가했어요 - 누르면
+ * 너비／높이를 각각 －/＋ 버튼으로 한 단계(24dp)씩 정확하게 조절할 수 있어요.
+ * 손가락으로 정밀하게 드래그하기 어려울 때 쓰라고 넣었어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -168,12 +194,23 @@ class TranslateOverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+
+    /** overlayView를 화면에 띄울 때 쓴 WindowManager 설정값이에요. 크기 조절/버튼 줄
+     *  보이기·숨기기 때마다 이 값을 고쳐서 windowManager.updateViewLayout에 다시 넣어줘요. */
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var captionText: TextView? = null
     private var captionScroll: ScrollView? = null
+    private var captionBox: View? = null
 
-    /** 더블탭하면 나타나는 [활성/비활성]·[닫기] 버튼 줄이에요. 평소엔 숨겨져 있어요. */
+    /** 더블탭하면 나타나는 [활성/비활성]·[투명도]·[닫기] 버튼 줄이에요. 평소엔 숨겨져 있어요. */
     private var controlBar: View? = null
     private var btnToggleActive: TextView? = null
+
+    /** [투명도] 버튼을 누르면 나타나는 슬라이더 줄이에요. 평소엔 숨겨져 있어요. */
+    private var opacityRow: View? = null
+
+    /** [크기] 버튼을 누르면 나타나는 －/＋ 버튼 줄이에요. 평소엔 숨겨져 있어요. */
+    private var resizeRow: View? = null
 
     private var translator: NllbTranslator? = null
     private var speechClient: VoskSpeechClient? = null
@@ -341,16 +378,48 @@ class TranslateOverlayService : Service() {
         val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
         val resizeHandleRight = view.findViewById<View>(R.id.resizeHandleRight)
         val resizeHandleBottom = view.findViewById<View>(R.id.resizeHandleBottom)
+        val captionBox = view.findViewById<View>(R.id.captionBox)
         val controlBar = view.findViewById<View>(R.id.controlBar)
         val btnToggleActive = view.findViewById<TextView>(R.id.btnToggleActive)
+        val btnOpacity = view.findViewById<TextView>(R.id.btnOpacity)
+        val btnResize = view.findViewById<TextView>(R.id.btnResize)
         val btnClose = view.findViewById<TextView>(R.id.btnClose)
+        val opacityRow = view.findViewById<View>(R.id.opacityRow)
+        val labelOpacity = view.findViewById<TextView>(R.id.labelOpacity)
+        val seekOpacity = view.findViewById<SeekBar>(R.id.seekOpacity)
+        val resizeRow = view.findViewById<View>(R.id.resizeRow)
+        val btnWidthMinus = view.findViewById<TextView>(R.id.btnWidthMinus)
+        val btnWidthPlus = view.findViewById<TextView>(R.id.btnWidthPlus)
+        val btnHeightMinus = view.findViewById<TextView>(R.id.btnHeightMinus)
+        val btnHeightPlus = view.findViewById<TextView>(R.id.btnHeightPlus)
+        this.captionBox = captionBox
         this.controlBar = controlBar
         this.btnToggleActive = btnToggleActive
+        this.opacityRow = opacityRow
+        this.resizeRow = resizeRow
 
         // 버튼 누르면: [활성/비활성] = 일시정지 전환 (누르자마자 글자가 바뀌어서 지금 상태를 보여줘요),
+        // [투명도] = 아래 슬라이더 줄 보이기/숨기기, [크기] = 아래 －/＋ 버튼 줄 보이기/숨기기,
         // [닫기] = 번역 완전히 중지 (창이 사라져요)
         btnToggleActive.setOnClickListener { togglePause() }
+        btnOpacity.setOnClickListener { toggleOpacityRowVisibility() }
+        btnResize.setOnClickListener { toggleResizeRowVisibility() }
         btnClose.setOnClickListener { turnOff() }
+
+        // 저장해둔 투명도 값을 불러와서 슬라이더 초기 위치와 배경에 바로 적용해요.
+        val savedOpacity = Prefs.getCaptionOpacity(this)
+        seekOpacity.progress = savedOpacity
+        applyCaptionOpacity(savedOpacity)
+        seekOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                applyCaptionOpacity(progress)
+                labelOpacity.text = "투명도 $progress"
+                Prefs.setCaptionOpacity(this@TranslateOverlayService, progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        labelOpacity.text = "투명도 $savedOpacity"
 
         val overlayType =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -369,8 +438,17 @@ class TranslateOverlayService : Service() {
         val defaultScrollHeightPx = (220 * density).toInt()
         val minScrollHeightPx = (80 * density).toInt()
         val maxScrollHeightPx = resources.displayMetrics.heightPixels - (200 * density).toInt()
-        captionScroll.layoutParams = captionScroll.layoutParams.apply { height = defaultScrollHeightPx }
 
+        // ⚠ v13: 예전엔 창(window) 자체 높이를 WRAP_CONTENT로 두고 captionScroll
+        // 높이만 바꾼 다음 "알아서 맞춰지길" 기다렸는데, 그러면 손잡이(resizeHandleBottom)가
+        // 실제 상자 가장자리랑 따로 노는 것처럼 보이는 문제가 있었어요("손잡이를 잡고
+        // 내리면 위에서 늘어나는 것 같다"고 하셨던 게 이거예요). 그래서 지금 화면에
+        // 실제로 보이는 내용(캡션 상자 + 혹시 열려 있는 버튼 줄들)에 맞춰서 창 높이를
+        // 직접 재보고(recomputeWindowHeight) 넣어주는 방식으로 바꿨어요 - 이러면
+        // 손잡이가 상자 가장자리에 항상 정확히 붙어있고, 버튼 줄(controlBar/투명도/크기)을
+        // 열었을 때도 창이 같이 커져서 잘리지 않아요. (46dp 같은 값을 고정해서 계산하면
+        // 캡션 상자만 있을 땐 맞지만, 버튼 줄이 펼쳐졌을 때는 그만큼 공간이 모자라서
+        // 잘리는 문제가 생겨요 - 그래서 고정값 대신 실측 방식을 썼어요)
         val params = WindowManager.LayoutParams(
             defaultWidthPx,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -383,6 +461,32 @@ class TranslateOverlayService : Service() {
             x = 40
             y = 160
         }
+        captionScroll.layoutParams = captionScroll.layoutParams.apply { height = defaultScrollHeightPx }
+
+        // addView 하기 전에 실제 필요한 높이를 미리 한 번 재서, 처음부터 정확한 숫자
+        // 높이로 시작해요(그래야 나중에 손잡이/버튼으로 조절할 때도 일관돼요).
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.heightPixels, View.MeasureSpec.AT_MOST)
+        )
+        params.height = view.measuredHeight
+
+        // 좌/우 너비, 위/아래 높이를 실제로 적용하는 부분을 한 곳에 모아뒀어요. 드래그로
+        // 조절할 때도, 아래 [크기] 버튼(－/＋)으로 조절할 때도 이 두 함수를 같이 써서
+        // 항상 똑같은 방식으로 동작해요.
+        fun applyWidth(newWidthPx: Int) {
+            params.width = newWidthPx.coerceIn(minWidthPx, maxWidthPx)
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (_: Exception) {
+            }
+        }
+
+        fun applyScrollHeight(newScrollHeightPx: Int) {
+            val clamped = newScrollHeightPx.coerceIn(minScrollHeightPx, maxScrollHeightPx)
+            captionScroll.layoutParams = captionScroll.layoutParams.apply { height = clamped }
+            recomputeWindowHeight()
+        }
 
         // 손가락으로 자막창(가운데 박스)을 드래그해서 원하는 위치로 옮길 수 있게
         var initialX = 0
@@ -390,7 +494,7 @@ class TranslateOverlayService : Service() {
         var touchX = 0f
         var touchY = 0f
 
-        // 더블탭 = 위쪽에 [활성/비활성]·[닫기] 버튼 줄을 보였다/숨겼다 해요.
+        // 더블탭 = 위쪽에 [활성/비활성]·[투명도]·[크기]·[닫기] 버튼 줄을 보였다/숨겼다 해요.
         // (일시정지 자체는 더블탭이 아니라 [활성/비활성] 버튼을 눌러야 바뀌어요)
         //
         // ⚠ v11: 이 리스너는 원래 captionBox(글자 영역 포함) 전체에 걸려있었는데,
@@ -440,13 +544,7 @@ class TranslateOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val newWidth = (resizeStartWidth + (event.rawX - resizeStartX).toInt())
-                        .coerceIn(minWidthPx, maxWidthPx)
-                    params.width = newWidth
-                    try {
-                        windowManager.updateViewLayout(view, params)
-                    } catch (_: Exception) {
-                    }
+                    applyWidth(resizeStartWidth + (event.rawX - resizeStartX).toInt())
                     true
                 }
                 else -> false
@@ -466,12 +564,8 @@ class TranslateOverlayService : Service() {
                     val delta = (event.rawX - resizeStartX).toInt()
                     val newWidth = (resizeStartWidth - delta).coerceIn(minWidthPx, maxWidthPx)
                     val actualDelta = resizeStartWidth - newWidth
-                    params.width = newWidth
                     params.x = initialX + actualDelta
-                    try {
-                        windowManager.updateViewLayout(view, params)
-                    } catch (_: Exception) {
-                    }
+                    applyWidth(newWidth)
                     true
                 }
                 else -> false
@@ -479,8 +573,8 @@ class TranslateOverlayService : Service() {
         }
 
         // 아래쪽 가장자리를 위아래로 끌면 captionScroll의 높이(한 번에 보이는 자막 양)가
-        // 바뀌어요. window 자체 높이는 WRAP_CONTENT라서, captionScroll 높이만 바꾸고
-        // updateViewLayout으로 한 번 더 알려주면 창 전체 크기도 자동으로 맞춰져요.
+        // 바뀌어요. applyScrollHeight()가 창(window) 높이까지 같이 계산해서 넣어주기
+        // 때문에, 손잡이가 상자 가장자리에서 벗어나지 않고 항상 붙어서 움직여요.
         var resizeStartHeight = 0
         var resizeStartY = 0f
 
@@ -492,37 +586,93 @@ class TranslateOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val newHeight = (resizeStartHeight + (event.rawY - resizeStartY).toInt())
-                        .coerceIn(minScrollHeightPx, maxScrollHeightPx)
-                    captionScroll.layoutParams = captionScroll.layoutParams.apply { height = newHeight }
-                    try {
-                        windowManager.updateViewLayout(view, params)
-                    } catch (_: Exception) {
-                    }
+                    applyScrollHeight(resizeStartHeight + (event.rawY - resizeStartY).toInt())
                     true
                 }
                 else -> false
             }
         }
 
+        // [크기] 버튼을 누르면 나오는 －/＋ 버튼들. 드래그가 정밀하게 잘 안 될 때를 위한
+        // 대안이에요 - 누를 때마다 한 단계(24dp)씩 정확하게 커지거나 작아져요.
+        val resizeStepPx = (24 * density).toInt()
+        btnWidthMinus.setOnClickListener { applyWidth(params.width - resizeStepPx) }
+        btnWidthPlus.setOnClickListener { applyWidth(params.width + resizeStepPx) }
+        btnHeightMinus.setOnClickListener { applyScrollHeight(captionScroll.layoutParams.height - resizeStepPx) }
+        btnHeightPlus.setOnClickListener { applyScrollHeight(captionScroll.layoutParams.height + resizeStepPx) }
+
         try {
             windowManager.addView(view, params)
             overlayView = view
+            overlayParams = params
         } catch (e: Exception) {
             // 오버레이 권한이 없는 등 예외 상황 - 알림으로만 상태를 알림
         }
     }
 
-    /** 더블탭했을 때: [활성/비활성]·[닫기] 버튼 줄을 보였다/숨겼다 해요. (창 자체는 그대로 떠 있어요) */
+    /** 창(window) 높이를 지금 화면에 실제로 보이는 내용(캡션 상자 + 혹시 열려 있는
+     *  controlBar/opacityRow/resizeRow)에 딱 맞게 다시 재서 넣어줘요. 자막 높이를
+     *  손잡이/버튼으로 조절할 때, 그리고 더블탭이나 [투명도]/[크기] 버튼으로 위쪽
+     *  버튼 줄들을 보였다 숨겼다 할 때마다 이 함수를 불러요 - 그래야 손잡이는 항상
+     *  상자 가장자리에 붙어있고, 버튼 줄이 펼쳐졌을 때도 잘리지 않고 창이 같이 커져요. */
+    private fun recomputeWindowHeight() {
+        val view = overlayView ?: return
+        val params = overlayParams ?: return
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.heightPixels, View.MeasureSpec.AT_MOST)
+        )
+        params.height = view.measuredHeight
+        try {
+            windowManager.updateViewLayout(view, params)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** 더블탭했을 때: [활성/비활성]·[투명도]·[크기]·[닫기] 버튼 줄을 보였다/숨겼다 해요.
+     *  (창 자체는 그대로 떠 있어요) 버튼 줄을 숨길 땐 투명도 슬라이더/크기 조절 줄도
+     *  같이 접어요 - 버튼이 안 보이는 상태에서 그 아래 것들만 계속 떠 있으면
+     *  헷갈리니까요. */
     private fun toggleControlBarVisibility() {
         val bar = controlBar ?: return
         val showing = bar.visibility == View.VISIBLE
         if (showing) {
             bar.visibility = View.GONE
+            opacityRow?.visibility = View.GONE
+            resizeRow?.visibility = View.GONE
         } else {
             updateToggleButtonLabel()
             bar.visibility = View.VISIBLE
         }
+        recomputeWindowHeight()
+    }
+
+    /** [투명도] 버튼을 눌렀을 때: 슬라이더 줄을 보였다/숨겼다 해요. */
+    private fun toggleOpacityRowVisibility() {
+        val row = opacityRow ?: return
+        row.visibility = if (row.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        recomputeWindowHeight()
+    }
+
+    /** [크기] 버튼을 눌렀을 때: －/＋ 버튼 줄을 보였다/숨겼다 해요. */
+    private fun toggleResizeRowVisibility() {
+        val row = resizeRow ?: return
+        row.visibility = if (row.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        recomputeWindowHeight()
+    }
+
+    /** captionBox의 배경(검은 둥근 박스)만 진하기를 바꿔요. 0(완전 투명)~10(원래처럼 진한
+     *  검정) 사이 값을 받아서 실제 알파값(0~255)으로 바꿔 적용해요.
+     *
+     *  ⚠ btnToggleActive/btnOpacity/btnClose도 같은 @drawable/overlay_bubble_bg를 배경으로
+     *  써요. Drawable 리소스는 여러 View가 기본적으로 같은 인스턴스를 공유할 수 있어서,
+     *  mutate() 없이 바로 alpha를 바꾸면 그 버튼들 배경까지 같이 옅어질 수 있어요.
+     *  mutate()로 captionBox만의 독립적인 Drawable 사본을 만든 다음 바꿔서, 다른 곳엔
+     *  영향이 안 가게 했어요. */
+    private fun applyCaptionOpacity(level: Int) {
+        val clamped = level.coerceIn(0, 10)
+        val alpha = (clamped * 255 / 10).coerceIn(0, 255)
+        (captionBox?.background?.mutate() as? GradientDrawable)?.alpha = alpha
     }
 
     /** [활성/비활성] 버튼을 눌렀을 때: 일시정지 중이면 다시 재생, 재생 중이면 일시정지해요. */
@@ -635,8 +785,18 @@ class TranslateOverlayService : Service() {
             Log.e("TranslateOverlay", "번역 실패 (문장 1개, 원문 그대로 표시)", e)
             text
         }
+
+        // ⚠ v12: "요", "응" 처럼 아주 짧은 추임새 한두 글자만 인식됐을 때, 번역 결과가
+        // 통째로 빈 문자열로 나오는 경우가 있었어요. 원문마저 짧으면(별 내용이 없다는
+        // 뜻이라) 자막에 아예 안 띄우고 넘어가고, 그보다 긴 문장인데 번역만 어쩌다
+        // 비었으면 "번역: " 뒤가 텅 빈 채로 보이지 않게 원문이라도 대신 보여줘요.
+        if (translated.isBlank()) {
+            if (text.length <= 2) return
+        }
+        val shownTranslation = translated.ifBlank { text }
+
         // "원문" 한 줄, 그 아래에 "번역" 한 줄 - 딱 이 순서로만 보여줘요(요청하신 형태).
-        val line = if (SHOW_SOURCE_TEXT_FOR_DEBUG) "원문: $text\n번역: $translated" else translated
+        val line = if (SHOW_SOURCE_TEXT_FOR_DEBUG) "원문: $text\n번역: $shownTranslation" else shownTranslation
         appendCaptionLine(line)
     }
 
@@ -701,6 +861,7 @@ class TranslateOverlayService : Service() {
             }
         }
         overlayView = null
+        overlayParams = null
 
         serviceJob.cancel()
         super.onDestroy()
