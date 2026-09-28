@@ -25,6 +25,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -163,6 +164,23 @@ import kotlinx.coroutines.withContext
  * 작으면 내용 크기만큼만 작게 보여주는 뷰, MaxHeightScrollView.kt 참고)로 바꿔서,
  * 손잡이/[크기] 버튼으로 조절하던 값은 이제 "이 이상은 안 커지고 스크롤되는
  * 한계선"이 됐어요.
+ *
+ * ⚠ v17 변경점: v16으로도 부족했어요 - 사진을 다시 보내주셔서 보니, 진짜 문제는
+ * "좌/우 크기 조절 손잡이(resizeHandleLeft/Right)가 캡션 박스보다 훨씬 아래까지
+ * 길게 이어져 있고, 그 아래쪽(화면엔 안 보이지만 실제로 거기 있는) 부분을 끌면
+ * 위에 있는 박스가 늘었다 줄었다 한다"는 것이었어요. 원인은 안드로이드의 잘 알려진
+ * 특성 때문이었어요 - resizeHandleLeft/Right는 "부모(FrameLayout)만큼 꽉 채우기
+ * (match_parent)"로 되어 있는데, 그 부모(FrameLayout)는 "자식들 크기에 맞추기
+ * (wrap_content)"라서, "부모만큼 채워라"는 지시를 받은 손잡이가 실제로는 캡션
+ * 박스 높이가 아니라 "여기서 줄 수 있는 최대 한도"(거의 화면 전체 높이)만큼
+ * 커져버렸던 거예요(박스 자체는 작은데, 손잡이만 화면 아래까지 몰래 길게 깔려있던
+ * 셈이에요). fixResizeHandleHeights()에서 캡션 박스를 실측한 직후 그 실제 높이를
+ * 손잡이 높이에 그대로 못박아 넣어서, 이제 손잡이가 박스보다 아래로 삐져나가지
+ * 않아요. 그리고 자막이 새로 뜰 때마다(캡션 내용이 늘거나 줄 때마다) 창 높이를
+ * 다시 재도록(recomputeWindowHeight) updateCaption/updateCaptionSync에도 추가했어요 -
+ * v16부터는 캡션 상자 높이가 내용에 따라 실시간으로 바뀌는데, 창 자체를 매번
+ * 다시 재지 않으면 상자는 커지는데 창은 예전 크기 그대로 남아서 새 내용이 잘려
+ * 보일 수 있었기 때문이에요.
  */
 class TranslateOverlayService : Service() {
 
@@ -504,10 +522,17 @@ class TranslateOverlayService : Service() {
 
         // addView 하기 전에 실제 필요한 높이를 미리 한 번 재서, 처음부터 정확한 숫자
         // 높이로 시작해요(그래야 나중에 손잡이/버튼으로 조절할 때도 일관돼요).
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.heightPixels, View.MeasureSpec.AT_MOST)
+        //
+        // ⚠ v17: 한 번 측정한 다음 fixResizeHandleHeights()로 좌/우 손잡이 높이를
+        // 캡션 박스의 실제 높이에 맞춰 바로잡고, 그 상태로 한 번 더 측정해야 창 높이가
+        // 정확하게 나와요(자세한 이유는 fixResizeHandleHeights 참고).
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY)
+        val heightSpecLoose = View.MeasureSpec.makeMeasureSpec(
+            resources.displayMetrics.heightPixels, View.MeasureSpec.AT_MOST
         )
+        view.measure(widthSpec, heightSpecLoose)
+        fixResizeHandleHeights()
+        view.measure(widthSpec, heightSpecLoose)
         params.height = view.measuredHeight
 
         // 좌/우 너비, 위/아래 높이를 실제로 적용하는 부분을 한 곳에 모아뒀어요. 드래그로
@@ -651,20 +676,52 @@ class TranslateOverlayService : Service() {
 
     /** 창(window) 높이를 지금 화면에 실제로 보이는 내용(캡션 상자 + 혹시 열려 있는
      *  controlBar/opacityRow/resizeRow)에 딱 맞게 다시 재서 넣어줘요. 자막 높이를
-     *  손잡이/버튼으로 조절할 때, 그리고 더블탭이나 [투명도]/[크기] 버튼으로 위쪽
-     *  버튼 줄들을 보였다 숨겼다 할 때마다 이 함수를 불러요 - 그래야 손잡이는 항상
-     *  상자 가장자리에 붙어있고, 버튼 줄이 펼쳐졌을 때도 잘리지 않고 창이 같이 커져요. */
+     *  손잡이/버튼으로 조절할 때, 더블탭이나 [투명도]/[크기] 버튼으로 위쪽 버튼
+     *  줄들을 보였다 숨겼다 할 때, 그리고 새 자막이 떠서 캡션 상자 높이 자체가
+     *  바뀔 때(updateCaption/updateCaptionSync 참고)마다 이 함수를 불러요 - 그래야
+     *  손잡이는 항상 상자 가장자리에 붙어있고, 창도 항상 실제 내용 크기에 맞아요. */
     private fun recomputeWindowHeight() {
         val view = overlayView ?: return
         val params = overlayParams ?: return
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.heightPixels, View.MeasureSpec.AT_MOST)
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY)
+        val heightSpecLoose = View.MeasureSpec.makeMeasureSpec(
+            resources.displayMetrics.heightPixels, View.MeasureSpec.AT_MOST
         )
+        view.measure(widthSpec, heightSpecLoose)
+        fixResizeHandleHeights()
+        view.measure(widthSpec, heightSpecLoose)
         params.height = view.measuredHeight
         try {
             windowManager.updateViewLayout(view, params)
         } catch (_: Exception) {
+        }
+    }
+
+    /** ⚠ v17: resizeHandleLeft/Right는 XML에서 "부모(FrameLayout)만큼 꽉 채우기"
+     *  (android:layout_height="match_parent")로 되어 있어요. 그런데 그 부모인
+     *  FrameLayout은 "자식 크기에 맞추기"(wrap_content)라서, 안드로이드에서는 이
+     *  조합일 때 match_parent 자식이 실제 형제(캡션 박스)의 높이가 아니라 "여기서
+     *  줄 수 있는 최대 한도"(이 화면에선 거의 화면 전체 높이)만큼 커져버리는 특성이
+     *  있어요. 그래서 화면엔 캡션 박스만 작게 보이는데, 실제로는 좌/우 손잡이가 그
+     *  아래로 화면 밖까지 길게 깔려 있고, 그 보이지 않는 아래쪽을 손가락으로 끌어도
+     *  박스 크기 조절이 되는(그런데 보기엔 손잡이가 박스랑 따로 떨어져 화면 아래로
+     *  이어지는 것처럼 보이는) 문제가 있었어요.
+     *
+     *  이 함수는 (view.measure를 한 번 호출해서) 캡션 박스의 실제 높이를 잰 다음,
+     *  그 값을 손잡이의 높이에 직접 못박아 넣어요. 이러면 다음 측정 때 손잡이가
+     *  더는 "최대 한도"가 아니라 "캡션 박스와 정확히 같은 높이"로 계산돼요. 호출하는
+     *  쪽(showOverlay/recomputeWindowHeight)에서 이 함수를 부른 다음 반드시 한 번 더
+     *  view.measure를 호출해야 방금 바꾼 높이가 실제로 반영돼요. */
+    private fun fixResizeHandleHeights() {
+        val boxHeight = captionBox?.measuredHeight ?: return
+        if (boxHeight <= 0) return
+        (resizeHandleLeft?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            lp.height = boxHeight
+            resizeHandleLeft?.layoutParams = lp
+        }
+        (resizeHandleRight?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            lp.height = boxHeight
+            resizeHandleRight?.layoutParams = lp
         }
     }
 
@@ -885,9 +942,16 @@ class TranslateOverlayService : Service() {
         updateCaption(captionLines.joinToString("\n\n"))
     }
 
+    // ⚠ v17: v16부터 captionScroll이 MaxHeightScrollView라서, 자막 내용이 늘거나
+    // 줄어들 때마다 캡션 박스의 실제 높이도 같이 바뀌어요. 그런데 창(window) 자체
+    // 높이는 recomputeWindowHeight()를 불러야만 다시 재서 반영되기 때문에, 여기서
+    // 안 불러주면 상자는 커지는데 창은 예전 크기 그대로 남아서 새로 늘어난 부분이
+    // 창 밖으로 잘려 보일 수 있어요. 그래서 자막 글자를 바꿀 때마다 같이 불러줘요.
+
     private suspend fun updateCaption(text: String) {
         withContext(Dispatchers.Main) {
             captionText?.text = text
+            recomputeWindowHeight()
             scrollCaptionToBottom()
         }
     }
@@ -896,6 +960,7 @@ class TranslateOverlayService : Service() {
     private fun updateCaptionSync(text: String) {
         captionText?.post {
             captionText?.text = text
+            recomputeWindowHeight()
             scrollCaptionToBottom()
         }
     }
