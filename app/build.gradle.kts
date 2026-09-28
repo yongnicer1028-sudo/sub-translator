@@ -11,8 +11,8 @@ android {
         applicationId = "com.yongyong.subtranslator"
         minSdk = 29
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.13-resize-fix"
+        versionCode = 14
+        versionName = "0.14-opacity-pause-fix"
     }
 
     // ⚠ 이 서명 설정이 없으면, 깃허브에서 새로 빌드할 때마다 매번 다른 임시 서명이 생겨서
