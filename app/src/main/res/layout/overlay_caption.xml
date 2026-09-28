@@ -36,6 +36,12 @@
       또 [활성/비활성] 버튼으로 비활성화하면 captionBox/손잡이/[투명도]/[크기]/[닫기]
       버튼이 전부 숨겨지고 [비활성] 버튼만 남아요(TranslateOverlayService.
       applyPausedVisualState 참고).
+    - v15: resizeHandleLeft/Right/Bottom의 배경을 각진 사각형 색상에서 캡션 박스
+      (overlay_bubble_bg, 14dp 둥근 모서리)와 같은 14dp 둥근 모서리 모양(각각
+      overlay_resize_left_bg / overlay_resize_right_bg / overlay_resize_bottom_bg)으로
+      바꿨어요 - 손잡이가 박스랑 닿는 자리(모서리)에서 두 도형의 곡선이 정확히
+      겹치면서, 손잡이가 박스에서 따로 떨어진 별개의 조각이 아니라 박스 가장자리의
+      일부처럼 하나로 이어져 보여요.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
@@ -274,21 +280,21 @@
             android:layout_width="24dp"
             android:layout_height="match_parent"
             android:layout_gravity="start"
-            android:background="#22FFFFFF" />
+            android:background="@drawable/overlay_resize_left_bg" />
 
         <View
             android:id="@+id/resizeHandleRight"
             android:layout_width="24dp"
             android:layout_height="match_parent"
             android:layout_gravity="end"
-            android:background="#22FFFFFF" />
+            android:background="@drawable/overlay_resize_right_bg" />
 
         <View
             android:id="@+id/resizeHandleBottom"
             android:layout_width="match_parent"
             android:layout_height="24dp"
             android:layout_gravity="bottom"
-            android:background="#22FFFFFF" />
+            android:background="@drawable/overlay_resize_bottom_bg" />
 
     </FrameLayout>
 
