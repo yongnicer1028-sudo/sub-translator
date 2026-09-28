@@ -25,7 +25,6 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -152,6 +151,18 @@ import kotlinx.coroutines.withContext
  * 이제는 자막 상자·크기 조절 손잡이·[투명도]/[크기]/[닫기] 버튼을 전부 숨기고
  * [비활성] 버튼 하나만 화면에 떠 있게 바꿨어요(applyPausedVisualState 참고) - 다시
  * 누르면 원래대로 돌아와요.
+ *
+ * ⚠ v16 변경점: captionScroll(자막 보이는 영역)의 높이를 예전엔 항상 고정 숫자
+ * (기본 220dp, 손잡이/[크기] 버튼으로 바꾼 값)로 "정확히 그 크기"로 딱 고정해서
+ * 썼어요. 그런데 "듣는 중…"처럼 짧은 내용만 있을 때도 상자가 억지로 그 크기만큼
+ * 커지면서 아래에 빈 공간이 크게 남았고, 그 옆의 크기 조절 손잡이만 그 빈 공간을
+ * 따라 길게 이어져 보이면서 "손잡이가 글자 상자랑 따로 떨어져 있다"는 문제의
+ * 진짜 원인이었어요(v15에서 손잡이 모서리를 둥글게 맞춘 것만으론 안 고쳐졌던
+ * 이유예요 - 모서리 모양이 아니라 빈 공간이 문제였어요). captionScroll을 새로
+ * 만든 MaxHeightScrollView(고정 높이 대신 "최대 높이"만 정해두고, 내용이 그보다
+ * 작으면 내용 크기만큼만 작게 보여주는 뷰, MaxHeightScrollView.kt 참고)로 바꿔서,
+ * 손잡이/[크기] 버튼으로 조절하던 값은 이제 "이 이상은 안 커지고 스크롤되는
+ * 한계선"이 됐어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -208,7 +219,7 @@ class TranslateOverlayService : Service() {
      *  보이기·숨기기 때마다 이 값을 고쳐서 windowManager.updateViewLayout에 다시 넣어줘요. */
     private var overlayParams: WindowManager.LayoutParams? = null
     private var captionText: TextView? = null
-    private var captionScroll: ScrollView? = null
+    private var captionScroll: MaxHeightScrollView? = null
     private var captionBox: View? = null
 
     /** 더블탭하면 나타나는 [활성/비활성]·[투명도]·[닫기] 버튼 줄이에요. 평소엔 숨겨져 있어요. */
@@ -391,7 +402,7 @@ class TranslateOverlayService : Service() {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.overlay_caption, null)
         captionText = view.findViewById(R.id.textCaption)
-        val captionScroll = view.findViewById<ScrollView>(R.id.captionScroll)
+        val captionScroll = view.findViewById<MaxHeightScrollView>(R.id.captionScroll)
         this.captionScroll = captionScroll
         val dragHandle = view.findViewById<View>(R.id.dragHandle)
         val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
@@ -458,8 +469,11 @@ class TranslateOverlayService : Service() {
         val minWidthPx = (140 * density).toInt()
         val maxWidthPx = resources.displayMetrics.widthPixels - (40 * density).toInt()
 
-        // 자막이 한 번에 보이는 높이(세로 크기)의 기본값/최소값/최대값. 이 높이보다
-        // 자막 내용이 길어지면 화면을 계속 키우는 대신 captionScroll 안에서 스크롤돼요.
+        // 자막이 한 번에 보이는 높이(세로 크기)의 기본값(=최대 한계선)/최소값/최대값.
+        // ⚠ v16: 이 값은 이제 captionScroll의 "정확한 고정 높이"가 아니라 "최대
+        // 한계선"이에요(MaxHeightScrollView 참고) - 자막 내용이 이 값보다 작으면
+        // 내용 크기만큼만 작게 보이고, 이 값보다 많아지면 그때 가서 이 값에서 멈추고
+        // 스크롤돼요.
         val defaultScrollHeightPx = (220 * density).toInt()
         val minScrollHeightPx = (80 * density).toInt()
         val maxScrollHeightPx = resources.displayMetrics.heightPixels - (200 * density).toInt()
@@ -486,7 +500,7 @@ class TranslateOverlayService : Service() {
             x = 40
             y = 160
         }
-        captionScroll.layoutParams = captionScroll.layoutParams.apply { height = defaultScrollHeightPx }
+        captionScroll.maxHeightPx = defaultScrollHeightPx
 
         // addView 하기 전에 실제 필요한 높이를 미리 한 번 재서, 처음부터 정확한 숫자
         // 높이로 시작해요(그래야 나중에 손잡이/버튼으로 조절할 때도 일관돼요).
@@ -509,7 +523,7 @@ class TranslateOverlayService : Service() {
 
         fun applyScrollHeight(newScrollHeightPx: Int) {
             val clamped = newScrollHeightPx.coerceIn(minScrollHeightPx, maxScrollHeightPx)
-            captionScroll.layoutParams = captionScroll.layoutParams.apply { height = clamped }
+            captionScroll.maxHeightPx = clamped
             recomputeWindowHeight()
         }
 
@@ -606,7 +620,7 @@ class TranslateOverlayService : Service() {
         resizeHandleBottom.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    resizeStartHeight = captionScroll.layoutParams.height
+                    resizeStartHeight = captionScroll.maxHeightPx
                     resizeStartY = event.rawY
                     true
                 }
@@ -623,8 +637,8 @@ class TranslateOverlayService : Service() {
         val resizeStepPx = (24 * density).toInt()
         btnWidthMinus.setOnClickListener { applyWidth(params.width - resizeStepPx) }
         btnWidthPlus.setOnClickListener { applyWidth(params.width + resizeStepPx) }
-        btnHeightMinus.setOnClickListener { applyScrollHeight(captionScroll.layoutParams.height - resizeStepPx) }
-        btnHeightPlus.setOnClickListener { applyScrollHeight(captionScroll.layoutParams.height + resizeStepPx) }
+        btnHeightMinus.setOnClickListener { applyScrollHeight(captionScroll.maxHeightPx - resizeStepPx) }
+        btnHeightPlus.setOnClickListener { applyScrollHeight(captionScroll.maxHeightPx + resizeStepPx) }
 
         try {
             windowManager.addView(view, params)
