@@ -44,13 +44,22 @@ import java.util.zip.ZipInputStream
  * 것보다, 깔끔하게 지우고 작은 모델 하나만 쓰는 게 더 낫다고 판단했어요.
  * load()가 다시 (context, language, onProgress) 3개만 받고, modelInfo()도
  * 작은 모델 주소만 돌려줘요.
+ *
+ * ⚠ v6 변경점: 일본어/중국어는 원래 띄어쓰기가 없는 언어인데, Vosk는 인식된
+ * 단어를 항상 스페이스로 띄어서 내놔요("正午 が そんな" 처럼). 이 띄어쓰기가 낀
+ * 문장을 그대로 번역기(M2M100)에 넘기면, 번역기는 원래 띄어쓰기 없이 붙어있어야
+ * 할 글자 사이에 없던 경계가 생긴 것으로 착각해서 단어를 이상하게 잘라 읽을 수
+ * 있어요 - 원문(음성인식 결과) 자체는 말이 되는데 번역만 유독 이상하게 나온
+ * 사례들이 이래서 생긴 걸로 보여요. 그래서 이 두 언어만 단어를 띄어쓰기 없이
+ * 붙이고(중국어는 원래도 띄어쓰기가 없어서 문제가 더 컸어요), 영어처럼 원래
+ * 띄어쓰기가 있는 언어는 그대로 스페이스로 이어붙여요 (wordJoinSeparator 참고).
  */
 
 /** 이 값보다 신뢰도(conf)가 낮은 단어는 걸러내요. 너무 높게 잡으면 멀쩡한 단어까지
  *  걸러질 수 있어서, 확실히 잘못 들은 것 같은 단어만 걸러내도록 낮게 잡았어요. */
 private const val MIN_WORD_CONFIDENCE = 0.3
 
-class VoskSpeechClient private constructor(private val model: Model) {
+class VoskSpeechClient private constructor(private val model: Model, private val language: String) {
 
     private val recognizer = Recognizer(model, 16000.0f).apply {
         // 위 v4 설명 참고: 단어별 신뢰도를 결과에 포함시켜요.
@@ -89,6 +98,17 @@ class VoskSpeechClient private constructor(private val model: Model) {
      */
     fun flush(): String? = extractText(recognizer.getFinalResult())
 
+    /** 일본어/중국어는 원래 띄어쓰기가 없는 언어라서, 이 두 언어일 땐 단어를 띄어쓰기
+     *  없이 붙이고(정리 함수 cleanupSpacing 참고), 그 외 언어는 원래대로 스페이스로
+     *  띄어써요. (자세한 이유는 위 v6 설명 참고) */
+    private fun wordJoinSeparator(): String =
+        if (language == Prefs.LANG_JAPANESE || language == Prefs.LANG_CHINESE) "" else " "
+
+    /** rawText를 그대로 쓸 때(단어별 신뢰도 정보가 없을 때)도, 일본어/중국어라면
+     *  Vosk가 넣어둔 단어 사이 스페이스를 없애줘요. */
+    private fun cleanupSpacing(text: String): String =
+        if (language == Prefs.LANG_JAPANESE || language == Prefs.LANG_CHINESE) text.replace(" ", "") else text
+
     private fun extractText(json: String): String? {
         return try {
             val root = JSONObject(json)
@@ -99,7 +119,7 @@ class VoskSpeechClient private constructor(private val model: Model) {
             // MIN_WORD_CONFIDENCE보다 낮은 단어(아마 잘못 들었을 가능성이 큰 단어)는
             // 걸러내고 나머지만 이어붙여요. (신뢰도 정보가 없는 경우엔 원문 그대로 써요)
             val wordsArray = root.optJSONArray("result")
-            if (wordsArray == null || wordsArray.length() == 0) return rawText
+            if (wordsArray == null || wordsArray.length() == 0) return cleanupSpacing(rawText)
 
             val keptWords = mutableListOf<String>()
             for (i in 0 until wordsArray.length()) {
@@ -113,7 +133,7 @@ class VoskSpeechClient private constructor(private val model: Model) {
 
             // 전부 다 걸러졌다면(드문 경우), 자막이 아예 안 뜨는 것보다는 원래 인식된
             // 문장이라도 보여주는 게 나아서 원문 그대로 돌려줘요.
-            if (keptWords.isEmpty()) rawText else keptWords.joinToString(" ")
+            if (keptWords.isEmpty()) cleanupSpacing(rawText) else keptWords.joinToString(wordJoinSeparator())
         } catch (e: Exception) {
             null
         }
@@ -170,7 +190,7 @@ class VoskSpeechClient private constructor(private val model: Model) {
                 }
                 if (modelRoot == null) return null
 
-                VoskSpeechClient(Model(modelRoot.absolutePath))
+                VoskSpeechClient(Model(modelRoot.absolutePath), language)
             } catch (e: Throwable) {
                 // Exception만 잡으면, 메모리가 부족할 때 나는 OutOfMemoryError는
                 // Exception이 아니라 Error라서 여기서 못 잡히고 서비스 전체가 조용히

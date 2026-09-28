@@ -103,6 +103,20 @@ import kotlinx.coroutines.withContext
  * 자막 높이를 조절할 수 있어요(좌우 너비 조절은 기존 그대로예요). 최근 자막을
  * 몇 개까지 기억해둘지(MAX_CAPTION_LINES)도 10 → 30으로 늘려서, 스크롤로 더
  * 많은 과거 자막을 볼 수 있게 했어요.
+ *
+ * ⚠ v11 변경점: (1) v10에서 captionScroll(스크롤 영역)을 추가한 뒤로 더블탭이
+ * 잘 안 먹히는 문제가 있었어요 - 원인은 더블탭/드래그 인식을 captionBox 전체에
+ * 걸어뒀는데, 그 안의 captionScroll이 스크롤을 위해 터치를 먼저 가로채면서
+ * 더블탭·드래그 제스처가 끝까지 전달이 안 됐던 거예요(자막이 쌓여서 스크롤 가능한
+ * 상태가 될수록 더 자주 발생). 그래서 드래그/더블탭 전용 손잡이(dragHandle,
+ * 캡션 박스 맨 위 흰 막대)를 스크롤 영역과 분리했어요 - 이제 손잡이를 잡으면
+ * 확실하게 이동/더블탭이 되고, captionScroll은 스크롤만 신경 써요. (2) 좌/우/아래
+ * 크기 조절 손잡이가 투명해서 어디를 잡아야 할지 안 보이던 문제 - 16dp → 24dp로
+ * 넓히고 옅은 흰색 띠로 눈에 보이게 해서 손가락으로 잡기 더 편해졌어요. (3)
+ * 일본어/중국어는 띄어쓰기가 없는 언어인데 Vosk가 단어를 스페이스로 띄어서
+ * 내놓다 보니, 번역기(M2M100)가 그 스페이스를 실제 띄어쓰기로 착각해서 단어를
+ * 이상하게 잘라 읽는 문제가 있었어요(VoskSpeechClient.kt 참고) - 이 두 언어만
+ * 띄어쓰기 없이 붙여서 번역기에 넘기도록 고쳤어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -323,7 +337,7 @@ class TranslateOverlayService : Service() {
         captionText = view.findViewById(R.id.textCaption)
         val captionScroll = view.findViewById<ScrollView>(R.id.captionScroll)
         this.captionScroll = captionScroll
-        val captionBox = view.findViewById<View>(R.id.captionBox)
+        val dragHandle = view.findViewById<View>(R.id.dragHandle)
         val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
         val resizeHandleRight = view.findViewById<View>(R.id.resizeHandleRight)
         val resizeHandleBottom = view.findViewById<View>(R.id.resizeHandleBottom)
@@ -378,6 +392,12 @@ class TranslateOverlayService : Service() {
 
         // 더블탭 = 위쪽에 [활성/비활성]·[닫기] 버튼 줄을 보였다/숨겼다 해요.
         // (일시정지 자체는 더블탭이 아니라 [활성/비활성] 버튼을 눌러야 바뀌어요)
+        //
+        // ⚠ v11: 이 리스너는 원래 captionBox(글자 영역 포함) 전체에 걸려있었는데,
+        // 그 안의 captionScroll이 스크롤을 위해 터치를 먼저 가져가버려서 더블탭이나
+        // 드래그가 끝까지 전달이 안 되는 경우가 있었어요. 그래서 스크롤 영역과
+        // 겹치지 않는 전용 손잡이(dragHandle)에만 걸어서, 항상 확실하게 동작하게
+        // 했어요.
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 toggleControlBarVisibility()
@@ -385,7 +405,7 @@ class TranslateOverlayService : Service() {
             }
         })
 
-        captionBox.setOnTouchListener { _, event ->
+        dragHandle.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
