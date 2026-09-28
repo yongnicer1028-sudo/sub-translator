@@ -26,6 +26,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -153,34 +154,38 @@ import kotlinx.coroutines.withContext
  * [비활성] 버튼 하나만 화면에 떠 있게 바꿨어요(applyPausedVisualState 참고) - 다시
  * 누르면 원래대로 돌아와요.
  *
- * ⚠ v16 변경점: captionScroll(자막 보이는 영역)의 높이를 예전엔 항상 고정 숫자
- * (기본 220dp, 손잡이/[크기] 버튼으로 바꾼 값)로 "정확히 그 크기"로 딱 고정해서
- * 썼어요. 그런데 "듣는 중…"처럼 짧은 내용만 있을 때도 상자가 억지로 그 크기만큼
- * 커지면서 아래에 빈 공간이 크게 남았고, 그 옆의 크기 조절 손잡이만 그 빈 공간을
- * 따라 길게 이어져 보이면서 "손잡이가 글자 상자랑 따로 떨어져 있다"는 문제의
- * 진짜 원인이었어요(v15에서 손잡이 모서리를 둥글게 맞춘 것만으론 안 고쳐졌던
- * 이유예요 - 모서리 모양이 아니라 빈 공간이 문제였어요). captionScroll을 새로
- * 만든 MaxHeightScrollView(고정 높이 대신 "최대 높이"만 정해두고, 내용이 그보다
- * 작으면 내용 크기만큼만 작게 보여주는 뷰, MaxHeightScrollView.kt 참고)로 바꿔서,
- * 손잡이/[크기] 버튼으로 조절하던 값은 이제 "이 이상은 안 커지고 스크롤되는
- * 한계선"이 됐어요.
+ * ⚠ v16 변경점(v18에서 되돌림): captionScroll의 높이를 "고정 크기" 대신 "최대
+ * 한계선"으로 바꿔서(MaxHeightScrollView), 내용이 적으면 내용 크기만큼만 작게
+ * 보이게 했던 적이 있어요. 아래 v18 참고 - 이 방식이 손잡이/[크기] 버튼으로 크기를
+ * 미리 키워두는 기능 자체를 망가뜨려서 되돌렸어요.
  *
- * ⚠ v17 변경점: v16으로도 부족했어요 - 사진을 다시 보내주셔서 보니, 진짜 문제는
- * "좌/우 크기 조절 손잡이(resizeHandleLeft/Right)가 캡션 박스보다 훨씬 아래까지
- * 길게 이어져 있고, 그 아래쪽(화면엔 안 보이지만 실제로 거기 있는) 부분을 끌면
- * 위에 있는 박스가 늘었다 줄었다 한다"는 것이었어요. 원인은 안드로이드의 잘 알려진
- * 특성 때문이었어요 - resizeHandleLeft/Right는 "부모(FrameLayout)만큼 꽉 채우기
- * (match_parent)"로 되어 있는데, 그 부모(FrameLayout)는 "자식들 크기에 맞추기
- * (wrap_content)"라서, "부모만큼 채워라"는 지시를 받은 손잡이가 실제로는 캡션
- * 박스 높이가 아니라 "여기서 줄 수 있는 최대 한도"(거의 화면 전체 높이)만큼
- * 커져버렸던 거예요(박스 자체는 작은데, 손잡이만 화면 아래까지 몰래 길게 깔려있던
- * 셈이에요). fixResizeHandleHeights()에서 캡션 박스를 실측한 직후 그 실제 높이를
- * 손잡이 높이에 그대로 못박아 넣어서, 이제 손잡이가 박스보다 아래로 삐져나가지
- * 않아요. 그리고 자막이 새로 뜰 때마다(캡션 내용이 늘거나 줄 때마다) 창 높이를
- * 다시 재도록(recomputeWindowHeight) updateCaption/updateCaptionSync에도 추가했어요 -
- * v16부터는 캡션 상자 높이가 내용에 따라 실시간으로 바뀌는데, 창 자체를 매번
- * 다시 재지 않으면 상자는 커지는데 창은 예전 크기 그대로 남아서 새 내용이 잘려
- * 보일 수 있었기 때문이에요.
+ * ⚠ v17 변경점: 사진을 보내주셔서 보니, "좌/우 크기 조절 손잡이(resizeHandleLeft/
+ * Right)가 캡션 박스보다 훨씬 아래까지 길게 이어져 있고, 그 아래쪽(화면엔 안
+ * 보이지만 실제로 거기 있는) 부분을 끌면 위에 있는 박스가 늘었다 줄었다 한다"는
+ * 문제가 있었어요. 원인은 안드로이드의 잘 알려진 특성 때문이었어요 -
+ * resizeHandleLeft/Right는 "부모(FrameLayout)만큼 꽉 채우기(match_parent)"로
+ * 되어 있는데, 그 부모(FrameLayout)는 "자식들 크기에 맞추기(wrap_content)"라서,
+ * "부모만큼 채워라"는 지시를 받은 손잡이가 실제로는 캡션 박스 높이가 아니라
+ * "여기서 줄 수 있는 최대 한도"(거의 화면 전체 높이)만큼 커져버렸던 거예요(박스
+ * 자체는 작은데, 손잡이만 화면 아래까지 몰래 길게 깔려있던 셈이에요).
+ * fixResizeHandleHeights()에서 캡션 박스를 실측한 직후 그 실제 높이를 손잡이
+ * 높이에 그대로 못박아 넣어서, 이제 손잡이가 박스보다 아래로 삐져나가지 않아요.
+ * 이 수정은 문제없이 잘 작동해서 v18에서도 그대로 유지했어요.
+ *
+ * ⚠ v18 변경점: v16(MaxHeightScrollView)이 진짜 문제였어요 - "내용이 적으면 내용
+ * 크기만큼만 작게"가, 뒤집어보면 "지금 내용보다 작은 목표 크기로는 못 줄어들고,
+ * 지금 내용과 같거나 그보다 작은 상태에서 아무리 [크기]＋를 눌러도(아직 내용이
+ * 안 늘었으니까) 커지지 않는다"는 뜻이었어요. 그래서 "번역을 시작하지도 않았는데
+ * (자막이 짧은 '듣는 중…' 상태) 아래쪽 손잡이나 [크기]＋를 눌러도 전혀 안 커진다"는
+ * 문제가 생겼어요 - 원래 이 손잡이/버튼은 "지금 내용과 상관없이 보고 싶은 크기를
+ * 미리 정해두는" 용도였는데, v16이 그 기능 자체를 무력화한 거예요. 그래서
+ * captionScroll을 다시 v15 이전과 똑같은 방식(MaxHeightScrollView가 아니라
+ * 평범한 ScrollView, "최대 한계선"이 아니라 "정확한 고정 크기")으로 되돌렸어요 -
+ * 손잡이/[크기] 버튼은 다시 예전처럼 지금 내용과 상관없이 즉시 커지고 작아져요.
+ * (자막이 길어질 때 자동으로 스크롤되는 동작 자체는 그대로예요 - 한 번에 보이는
+ * 영역의 크기를 사용자가 직접 정한다는 점만 원래대로 돌아온 거예요.) v17의 손잡이
+ * 높이 고정(fixResizeHandleHeights)은 이 되돌림과 무관하게 계속 문제없이
+ * 작동하므로 그대로 남겨뒀어요.
  */
 class TranslateOverlayService : Service() {
 
@@ -237,7 +242,7 @@ class TranslateOverlayService : Service() {
      *  보이기·숨기기 때마다 이 값을 고쳐서 windowManager.updateViewLayout에 다시 넣어줘요. */
     private var overlayParams: WindowManager.LayoutParams? = null
     private var captionText: TextView? = null
-    private var captionScroll: MaxHeightScrollView? = null
+    private var captionScroll: ScrollView? = null
     private var captionBox: View? = null
 
     /** 더블탭하면 나타나는 [활성/비활성]·[투명도]·[닫기] 버튼 줄이에요. 평소엔 숨겨져 있어요. */
@@ -420,7 +425,7 @@ class TranslateOverlayService : Service() {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.overlay_caption, null)
         captionText = view.findViewById(R.id.textCaption)
-        val captionScroll = view.findViewById<MaxHeightScrollView>(R.id.captionScroll)
+        val captionScroll = view.findViewById<ScrollView>(R.id.captionScroll)
         this.captionScroll = captionScroll
         val dragHandle = view.findViewById<View>(R.id.dragHandle)
         val resizeHandleLeft = view.findViewById<View>(R.id.resizeHandleLeft)
@@ -487,11 +492,11 @@ class TranslateOverlayService : Service() {
         val minWidthPx = (140 * density).toInt()
         val maxWidthPx = resources.displayMetrics.widthPixels - (40 * density).toInt()
 
-        // 자막이 한 번에 보이는 높이(세로 크기)의 기본값(=최대 한계선)/최소값/최대값.
-        // ⚠ v16: 이 값은 이제 captionScroll의 "정확한 고정 높이"가 아니라 "최대
-        // 한계선"이에요(MaxHeightScrollView 참고) - 자막 내용이 이 값보다 작으면
-        // 내용 크기만큼만 작게 보이고, 이 값보다 많아지면 그때 가서 이 값에서 멈추고
-        // 스크롤돼요.
+        // 자막이 한 번에 보이는 높이(세로 크기)의 기본값/최소값/최대값. 이 높이보다
+        // 자막 내용이 길어지면 화면을 계속 키우는 대신 captionScroll 안에서 스크롤돼요.
+        // ⚠ v18: 이 값은 captionScroll의 "정확한 고정 높이"예요 - 지금 자막 내용이
+        // 짧더라도 손잡이/[크기] 버튼으로 미리 원하는 크기를 정해둘 수 있어야 해서,
+        // "최대 한계선"(v16의 MaxHeightScrollView) 방식은 되돌렸어요.
         val defaultScrollHeightPx = (220 * density).toInt()
         val minScrollHeightPx = (80 * density).toInt()
         val maxScrollHeightPx = resources.displayMetrics.heightPixels - (200 * density).toInt()
@@ -518,7 +523,7 @@ class TranslateOverlayService : Service() {
             x = 40
             y = 160
         }
-        captionScroll.maxHeightPx = defaultScrollHeightPx
+        captionScroll.layoutParams = captionScroll.layoutParams.apply { height = defaultScrollHeightPx }
 
         // addView 하기 전에 실제 필요한 높이를 미리 한 번 재서, 처음부터 정확한 숫자
         // 높이로 시작해요(그래야 나중에 손잡이/버튼으로 조절할 때도 일관돼요).
@@ -548,7 +553,7 @@ class TranslateOverlayService : Service() {
 
         fun applyScrollHeight(newScrollHeightPx: Int) {
             val clamped = newScrollHeightPx.coerceIn(minScrollHeightPx, maxScrollHeightPx)
-            captionScroll.maxHeightPx = clamped
+            captionScroll.layoutParams = captionScroll.layoutParams.apply { height = clamped }
             recomputeWindowHeight()
         }
 
@@ -645,7 +650,7 @@ class TranslateOverlayService : Service() {
         resizeHandleBottom.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    resizeStartHeight = captionScroll.maxHeightPx
+                    resizeStartHeight = captionScroll.layoutParams.height
                     resizeStartY = event.rawY
                     true
                 }
@@ -662,8 +667,8 @@ class TranslateOverlayService : Service() {
         val resizeStepPx = (24 * density).toInt()
         btnWidthMinus.setOnClickListener { applyWidth(params.width - resizeStepPx) }
         btnWidthPlus.setOnClickListener { applyWidth(params.width + resizeStepPx) }
-        btnHeightMinus.setOnClickListener { applyScrollHeight(captionScroll.maxHeightPx - resizeStepPx) }
-        btnHeightPlus.setOnClickListener { applyScrollHeight(captionScroll.maxHeightPx + resizeStepPx) }
+        btnHeightMinus.setOnClickListener { applyScrollHeight(captionScroll.layoutParams.height - resizeStepPx) }
+        btnHeightPlus.setOnClickListener { applyScrollHeight(captionScroll.layoutParams.height + resizeStepPx) }
 
         try {
             windowManager.addView(view, params)
@@ -676,10 +681,9 @@ class TranslateOverlayService : Service() {
 
     /** 창(window) 높이를 지금 화면에 실제로 보이는 내용(캡션 상자 + 혹시 열려 있는
      *  controlBar/opacityRow/resizeRow)에 딱 맞게 다시 재서 넣어줘요. 자막 높이를
-     *  손잡이/버튼으로 조절할 때, 더블탭이나 [투명도]/[크기] 버튼으로 위쪽 버튼
-     *  줄들을 보였다 숨겼다 할 때, 그리고 새 자막이 떠서 캡션 상자 높이 자체가
-     *  바뀔 때(updateCaption/updateCaptionSync 참고)마다 이 함수를 불러요 - 그래야
-     *  손잡이는 항상 상자 가장자리에 붙어있고, 창도 항상 실제 내용 크기에 맞아요. */
+     *  손잡이/버튼으로 조절할 때, 그리고 더블탭이나 [투명도]/[크기] 버튼으로 위쪽
+     *  버튼 줄들을 보였다 숨겼다 할 때마다 이 함수를 불러요 - 그래야 손잡이는 항상
+     *  상자 가장자리에 붙어있고, 버튼 줄이 펼쳐졌을 때도 잘리지 않고 창이 같이 커져요. */
     private fun recomputeWindowHeight() {
         val view = overlayView ?: return
         val params = overlayParams ?: return
@@ -942,16 +946,9 @@ class TranslateOverlayService : Service() {
         updateCaption(captionLines.joinToString("\n\n"))
     }
 
-    // ⚠ v17: v16부터 captionScroll이 MaxHeightScrollView라서, 자막 내용이 늘거나
-    // 줄어들 때마다 캡션 박스의 실제 높이도 같이 바뀌어요. 그런데 창(window) 자체
-    // 높이는 recomputeWindowHeight()를 불러야만 다시 재서 반영되기 때문에, 여기서
-    // 안 불러주면 상자는 커지는데 창은 예전 크기 그대로 남아서 새로 늘어난 부분이
-    // 창 밖으로 잘려 보일 수 있어요. 그래서 자막 글자를 바꿀 때마다 같이 불러줘요.
-
     private suspend fun updateCaption(text: String) {
         withContext(Dispatchers.Main) {
             captionText?.text = text
-            recomputeWindowHeight()
             scrollCaptionToBottom()
         }
     }
@@ -960,7 +957,6 @@ class TranslateOverlayService : Service() {
     private fun updateCaptionSync(text: String) {
         captionText?.post {
             captionText?.text = text
-            recomputeWindowHeight()
             scrollCaptionToBottom()
         }
     }
