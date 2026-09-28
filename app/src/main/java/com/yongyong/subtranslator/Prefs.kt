@@ -29,6 +29,17 @@ object Prefs {
     // 껐다 켰다 하는 옵션으로 두는 것보다 아예 없애는 게 더 안전해서예요. 번역 품질은
     // 대신 VoskSpeechClient.kt의 단어 신뢰도 필터링으로 개선하고 있어요.
 
+    private const val KEY_CAPTION_OPACITY = "caption_opacity"
+
+    /** 자막창 배경의 진하기(0=완전 투명 ~ 10=완전 불투명). 기본값 10 = 지금까지와 똑같은
+     *  진한 검은 배경이에요(더블탭 → 투명도 버튼을 안 눌러본 사람은 아무것도 안 바뀌어요). */
+    fun getCaptionOpacity(context: Context): Int =
+        prefs(context).getInt(KEY_CAPTION_OPACITY, 10).coerceIn(0, 10)
+
+    fun setCaptionOpacity(context: Context, value: Int) {
+        prefs(context).edit().putInt(KEY_CAPTION_OPACITY, value.coerceIn(0, 10)).apply()
+    }
+
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }
