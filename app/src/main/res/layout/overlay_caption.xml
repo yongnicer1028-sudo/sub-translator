@@ -30,6 +30,12 @@
       높이(한 번에 보이는 자막 양)가 늘었다 줄었다 해요. 마찬가지로 24dp로 넓히고
       보이게 바꿨어요. v13에서 창(window) 자체 높이도 같이 정확하게 계산해서
       넣도록 고쳐서, 손잡이가 상자 가장자리에 항상 딱 붙어서 움직여요.
+    - v14: resizeHandleLeft/Right/Bottom은 이제 [투명도] 슬라이더 값에 맞춰 View
+      alpha가 captionBox 배경과 같은 비율로 같이 옅어지고 진해져요(코드는
+      TranslateOverlayService.applyCaptionOpacity 참고, XML 구조 자체는 안 바뀜).
+      또 [활성/비활성] 버튼으로 비활성화하면 captionBox/손잡이/[투명도]/[크기]/[닫기]
+      버튼이 전부 숨겨지고 [비활성] 버튼만 남아요(TranslateOverlayService.
+      applyPausedVisualState 참고).
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
